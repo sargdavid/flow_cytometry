@@ -62,89 +62,133 @@ meta <- fread("Data/FlowRepository_FR-FCM-Z3PK_files/meta.csv",
               skip = 6)
 ```
 
-# Forward scattering (FSC) vs. Side Scattering (SSC)
-Source: [A guide to gating in flow cytometry](https://www.bio-rad-antibodies.com/blog/a-guide-to-gating-in-flow-cytometry.html)
-  
 # Long data
-Florochrome  
-
 ```{r}
 dtl <- rbindlist(l1)
 dtl <- merge(meta,
              dtl,
              by = "File Name")
+dtl$`File Name` <- factor(dtl$`File Name`,
+                          levels = unique(dtl$`File Name`))
+
+dtl$Description <- factor(dtl$Description,
+                          levels = unique(dtl$Description))
+
+dtl$`Sample characteristic` <- factor(dtl$`Sample characteristic`,
+                                      levels = c("Undifferentiated",
+                                                 "Differentated T3"))
+
+dtl$`Experiment Variables` <- factor(dtl$`Experiment Variables`,
+                                     levels = c("Negative control, T0",
+                                                "Negative control, T3",
+                                                "lncRNAs, T0",
+                                                "lncRNAs, T3"))
+
+dtl$Treatment <- factor(dtl$Treatment,
+                        levels = c("Negative control",
+                                   "lncRNAs"))
 summary(dtl)
 ```
 
-# Singletons vs. cell clusters
-```{r,fig.width=6,fig.height=7}
-ggplot(dtl,
-       aes(x = `FSC-A`,
-           y = `FSC-H`,
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  geom_point(shape = ".",
-             alpha = 0.3) +
-  theme_bw() +
-  theme(legend.position = "none")
-
-ggplot(dtl,
-       aes(x = `FSC-A`,
-           y = `FSC-H`,
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  # geom_density_2d() +
-  stat_density_2d(contour_var = "count") +
-  theme_bw() +
-  theme(legend.position = "none")
-```
-
-```{r,fig.width=6,fig.height=7}
-ggplot(dtl,
-       aes(x = log(`FSC-A` + 10000),
-           y = log(`FSC-H` + 10000),
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  geom_point(shape = ".",
-             alpha = 0.3) +
-  theme_bw() +
-  theme(legend.position = "none")
-
-ggplot(dtl,
-       aes(x = log(`FSC-A` + 10000),
-           y = log(`FSC-H` + 10000),
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  # geom_density_2d() +
-  stat_density_2d(contour_var = "count") +
-  theme_bw() +
-  theme(legend.position = "none")
-```
-
+# Save data
 ```{r}
-Z <- cbind(A = log(dtl$`FSC-A` + 10000),
-           H = log(dtl$`FSC-H` + 10000))
-s=var(Z)
+save(dtl,
+     file = "Data/dtl.RData")
+```
+
+# START HERE: Reload data
+```{r}
+load("Data/dtl.RData")
+```
+
+# Forward scattering (FSC) vs. Side Scattering (SSC)
+FSC-A: Forward Scattering Area  
+FSC-H: Forward Scattering Height  
+SSC-A: Side Scattering Area  
+SSC-H: Side Scattering Height   
+  
+Source: [A guide to gating in flow cytometry](https://www.bio-rad-antibodies.com/blog/a-guide-to-gating-in-flow-cytometry.html)
+
+# Singletons vs. cell clusters
+## Raw scale
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `FSC-H`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  # geom_density_2d() +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+## Log-log scale
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = log(`FSC-A` - min(`FSC-A`) + 10000),
+           y = log(`FSC-H` - min(`FSC-H`) + 10000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  geom_abline(slope = 1,
+              intercept = 0,
+              linetype = "dashed") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+## Javier's transformation
+```{r}
+Z <- cbind(A = log(dtl$`FSC-A` - min(dtl$`FSC-A`) + 10000),
+           H = log(dtl$`FSC-H` - min(dtl$`FSC-H`) + 10000))
+s <- var(Z)
 s
 
 xx <- chol(solve(s))
 xx
 
 xxx <- Z %*% t(xx)
-plot(xxx, pch = ".")
-abline(v = -17,
-       col = 3)
+plot(xxx, 
+     pch = ".",
+     col = alpha(3, 0.3))
+abline(v = -7,
+       col = 2,
+       lty = 2)
+abline(h = 27,
+       col = 2,
+       lty = 2)
 ```
 
+## Remove cell clusters
 ```{r}
-ndx <- which(xxx[, 1] < -18)
+ndx <- which(!(xxx[, 1] > -7 &
+               xxx[, 2] > 27))
 
 dt2 <- dtl[ndx, ]
 ```
 
-
-# Debrees
+# Debris
+## Areas, raw scale
 ```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `SSC-A`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  theme_bw() +
+  theme(legend.position = "none")
+
 ggplot(dt2,
        aes(x = `FSC-A`,
            y = `SSC-A`,
@@ -152,72 +196,104 @@ ggplot(dt2,
   facet_wrap(~ `Sample characteristic` + Treatment) +
   geom_point(shape = ".",
              alpha = 0.3) +
-  theme_bw() +
-  theme(legend.position = "none")
-
-ggplot(dtl,
-       aes(x = `FSC-A`,
-           y = `SSC-A`,
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  geom_point(shape = ".",
-             alpha = 0.3) +
-  theme_bw() +
-  theme(legend.position = "none")
-
-ggplot(dtl,
-       aes(x = `FSC-A`,
-           y = `SSC-A`,
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  # geom_density_2d() +
-  stat_density_2d(contour_var = "count") +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
   theme_bw() +
   theme(legend.position = "none")
 ```
 
+## Areas, log scale
 ```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = log(`FSC-A` - min(`FSC-A`) + 10000),
+           y = log(`SSC-A` - min(`SSC-A`) + 10000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  geom_abline(slope = 1,
+              intercept = 0,
+              linetype = "dashed") +
+  theme_bw() +
+  theme(legend.position = "none")
+
 ggplot(dt2,
-       aes(x = log(`FSC-A` - min(`FSC-A`) + 1000),
-           y = log(`SSC-A` - min(`SSC-A`) + 1000),
+       aes(x = log(`FSC-A` - min(`FSC-A`) + 10000),
+           y = log(`SSC-A` - min(`SSC-A`) + 10000),
            color = `Experiment Variables`)) +
   facet_wrap(~ `Sample characteristic` + Treatment) +
   geom_point(shape = ".",
              alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
   geom_abline(slope = 1,
               intercept = 0,
               linetype = "dashed") +
-  theme_bw() +
-  theme(legend.position = "none")
-
-ggplot(dtl,
-       aes(x = log(`FSC-A` - min(`FSC-A`) + 1000),
-           y = log(`SSC-A` - min(`SSC-A`) + 1000),
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  geom_point(shape = ".",
-             alpha = 0.3) +
-  geom_abline(slope = 1,
-              intercept = 0,
-              linetype = "dashed") +
-  theme_bw() +
-  theme(legend.position = "none")
-
-ggplot(dtl,
-       aes(x = log(`FSC-A` - min(`FSC-A`) + 1000),
-           y = log(`SSC-A` - min(`SSC-A`) + 1000),
-           color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + Treatment) +
-  stat_density_2d(contour_var = "count") +
   theme_bw() +
   theme(legend.position = "none")
 ```
 
-
+## Height, raw scale
 ```{r,fig.width=6,fig.height=7}
 ggplot(dtl,
-       aes(x = log(`Pacific Blue-A` - min(`Pacific Blue-A`) + 1),
-           y = log(`PE-Texas Red-A` - min(`PE-Texas Red-A`) + 1),
+       aes(x = `FSC-H`,
+           y = `SSC-H`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dt2,
+       aes(x = `FSC-H`,
+           y = `SSC-H`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  geom_vline(xintercept = 0.25*10^5,
+             linetype = "dashed",
+             color = "black") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+## Remove debris
+```{r}
+dt3 <- dt2[dt2$`FSC-H` > 0.25*10^5, ]
+```
+
+
+# ASIDE: Signal to Pulse to Dot
+Pages 19-24 of:  
+https://www.biovis.uu.se/digitalAssets/593/c_593618-l_1-k_flowbasics_biovis_pacho_190626.pdf  
+  
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = `FSC-H`,
+           y = `SSC-A`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+# Fluorochromes
+```{r,fig.width=6,fig.height=7}
+ggplot(dt3,
+       aes(x = log(`Pacific Blue-A` - min(`Pacific Blue-A`) + 100),
+           y = log(`PE-Texas Red-A` - min(`PE-Texas Red-A`) + 100),
            color = `Experiment Variables`)) +
   facet_wrap(~ `Sample characteristic` + Treatment) +
   geom_point(shape = ".",
@@ -227,27 +303,25 @@ ggplot(dtl,
 ```
 
 ```{r,fig.width=6,fig.height=7}
-ggplot(dtl,
-       aes(x = log(`AmCyan-A` - min(`AmCyan-A`) + 1),
-           y = log(`PE-Cy7-A` - min(`PE-Cy7-A`) + 1),
+ggplot(dt3,
+       aes(x = log(`AmCyan-A` - min(`AmCyan-A`) + 100),
+           y = log(`PE-Cy7-A` - min(`PE-Cy7-A`) + 100),
            color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + dtl$Treatment) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
   geom_point(shape = ".") +
   theme_bw() +
   theme(legend.position = "none")
 ```
 
-# Fluorochromes
-
 # 2D density plot
 Source: https://ggplot2.tidyverse.org/reference/geom_density_2d.html  
   
 ```{r,fig.width=6,fig.height=7}
-ggplot(dtl,
+ggplot(dt3,
        aes(x = log(`AmCyan-A` - min(`AmCyan-A`) + 1),
            y = log(`PE-Cy7-A` - min(`PE-Cy7-A`) + 1),
            color = `Experiment Variables`)) +
-  facet_wrap(~ `Sample characteristic` + dtl$Treatment) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
   geom_point(shape = ".",
              color = "grey") +
   # geom_density_2d() +
@@ -258,7 +332,7 @@ ggplot(dtl,
 
 # PCA
 ```{r}
-dt_pca <- dtl[, `Pacific Blue-A`:`QDot 800-A`]
+dt_pca <- dt3[, `Pacific Blue-A`:`QDot 800-A`]
 dt_pca <- apply(X = dt_pca,
                 MARGIN = 2,
                 FUN = function(a) {
@@ -279,7 +353,7 @@ choices <- 1:2
 dt.scr <- data.table(m1$x[, choices])
 
 # Add grouping variable
-dt.scr$grp <- factor(dtl$`Experiment Variables`)
+dt.scr$grp <- factor(dt3$`Experiment Variables`)
 head(dt.scr)
 ```
 
@@ -344,7 +418,6 @@ graphics.off()
 
 p1
 ```
-
 
 # Session
 ```{r}
