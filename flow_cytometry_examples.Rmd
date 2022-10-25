@@ -1,0 +1,350 @@
+---
+title: "Public flow cytometry data exploration"
+output: html_notebook
+---
+
+# Setup
+```{r}
+## Install 'flowCore' package
+# if (!require("BiocManager",
+#              quietly = TRUE))
+#   install.packages("BiocManager")
+# BiocManager::install("flowCore")
+
+require(flowCore)
+require(data.table)
+require(ggplot2)
+```
+
+Fluorescent Dye Directory:  
+https://app.fluorofinder.com/dyes?gclid=Cj0KCQjwyt-ZBhCNARIsAKH1176G3SpZ4jKJg3nIZvZKAzYVae4ToSHajbJNHrPKx6usUlVIhUDt3bAaAkBmEALw_wcB  
+  
+Commonly Used Fluorochromes and Their Properties  
+https://www.umc.edu/cancerinstitute/Cancer-Research/Core-Facilities/Flow%20Cytometry%20Core/Resources/Commonly-Used-Fluorochromes-and-Properties.html 
+  
+# All Data
+Data Repository: https://flowrepository.org/public_experiment_representations 
+
+##  Data: 20190311 TOPRO GFP BFP mCherry PECy7 BV510
+Cell isolation by FACS of lncRNAs targeted with pgRNAs along BLaER1 transdifferentiation.  
+Source: https://flowrepository.org/experiments/3892/download_ziped_files  
+  
+```{r}
+fname <- list.files(path = "Data/FlowRepository_FR-FCM-Z3PK_files",
+                    pattern = "\\.fcs$")
+fname
+
+l1 <- lapply(X = fname,
+             FUN = function(a) {
+               tmp <- read.FCS(paste0("Data/FlowRepository_FR-FCM-Z3PK_files/",
+                                      a))
+               return(data.table(`File Name` = a,
+                                 tmp@exprs))
+             })
+names(l1) <- fname
+
+head(l1[[1]])
+names(l1[[1]])
+```
+
+# Meta data
+Source: https://flowrepository.org/experiments/3892  
+  
+```{r}
+# Sample info
+fread("Data/FlowRepository_FR-FCM-Z3PK_files/meta.csv",
+      header = FALSE,
+      nrows = 6)
+
+# Meta data
+meta <- fread("Data/FlowRepository_FR-FCM-Z3PK_files/meta.csv",
+              header = TRUE,
+              skip = 6)
+```
+
+# Forward scattering (FSC) vs. Side Scattering (SSC)
+Source: [A guide to gating in flow cytometry](https://www.bio-rad-antibodies.com/blog/a-guide-to-gating-in-flow-cytometry.html)
+  
+# Long data
+Florochrome  
+
+```{r}
+dtl <- rbindlist(l1)
+dtl <- merge(meta,
+             dtl,
+             by = "File Name")
+summary(dtl)
+```
+
+# Singletons vs. cell clusters
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `FSC-H`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `FSC-H`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  # geom_density_2d() +
+  stat_density_2d(contour_var = "count") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = log(`FSC-A` + 10000),
+           y = log(`FSC-H` + 10000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dtl,
+       aes(x = log(`FSC-A` + 10000),
+           y = log(`FSC-H` + 10000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  # geom_density_2d() +
+  stat_density_2d(contour_var = "count") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r}
+Z <- cbind(A = log(dtl$`FSC-A` + 10000),
+           H = log(dtl$`FSC-H` + 10000))
+s=var(Z)
+s
+
+xx <- chol(solve(s))
+xx
+
+xxx <- Z %*% t(xx)
+plot(xxx, pch = ".")
+abline(v = -17,
+       col = 3)
+```
+
+```{r}
+ndx <- which(xxx[, 1] < -18)
+
+dt2 <- dtl[ndx, ]
+```
+
+
+# Debrees
+```{r,fig.width=6,fig.height=7}
+ggplot(dt2,
+       aes(x = `FSC-A`,
+           y = `SSC-A`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `SSC-A`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `SSC-A`,
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  # geom_density_2d() +
+  stat_density_2d(contour_var = "count") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r,fig.width=6,fig.height=7}
+ggplot(dt2,
+       aes(x = log(`FSC-A` - min(`FSC-A`) + 1000),
+           y = log(`SSC-A` - min(`SSC-A`) + 1000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  geom_abline(slope = 1,
+              intercept = 0,
+              linetype = "dashed") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dtl,
+       aes(x = log(`FSC-A` - min(`FSC-A`) + 1000),
+           y = log(`SSC-A` - min(`SSC-A`) + 1000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  geom_abline(slope = 1,
+              intercept = 0,
+              linetype = "dashed") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(dtl,
+       aes(x = log(`FSC-A` - min(`FSC-A`) + 1000),
+           y = log(`SSC-A` - min(`SSC-A`) + 1000),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  stat_density_2d(contour_var = "count") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = log(`Pacific Blue-A` - min(`Pacific Blue-A`) + 1),
+           y = log(`PE-Texas Red-A` - min(`PE-Texas Red-A`) + 1),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + Treatment) +
+  geom_point(shape = ".",
+             alpha = 0.3) + 
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = log(`AmCyan-A` - min(`AmCyan-A`) + 1),
+           y = log(`PE-Cy7-A` - min(`PE-Cy7-A`) + 1),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + dtl$Treatment) +
+  geom_point(shape = ".") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+# 2D density plot
+Source: https://ggplot2.tidyverse.org/reference/geom_density_2d.html  
+  
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = log(`AmCyan-A` - min(`AmCyan-A`) + 1),
+           y = log(`PE-Cy7-A` - min(`PE-Cy7-A`) + 1),
+           color = `Experiment Variables`)) +
+  facet_wrap(~ `Sample characteristic` + dtl$Treatment) +
+  geom_point(shape = ".",
+             color = "grey") +
+  # geom_density_2d() +
+  stat_density_2d(contour_var = "count") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+# PCA
+```{r}
+dt_pca <- dtl[, `Pacific Blue-A`:`QDot 800-A`]
+dt_pca <- apply(X = dt_pca,
+                MARGIN = 2,
+                FUN = function(a) {
+                  return(log(a - min(a) + 1))
+                })
+```
+
+```{r}
+m1 <- prcomp(dt_pca,
+             center = TRUE,
+             scale. = TRUE)
+summary(m1)
+```
+
+## Scores, i.e. points (df.u)
+```{r}
+choices <- 1:2
+dt.scr <- data.table(m1$x[, choices])
+
+# Add grouping variable
+dt.scr$grp <- factor(dtl$`Experiment Variables`)
+head(dt.scr)
+```
+
+## Loadings, i.e. arrows (df.v)
+```{r}
+dt.rot <- as.data.frame(m1$rotation[, choices])
+dt.rot$feat <- rownames(dt.rot)
+dt.rot <- data.table(dt.rot)
+dt.rot
+```
+
+## Axis labels
+```{r}
+u.axis.labs <- paste(colnames(dt.rot)[1:2], 
+                     sprintf('(%0.1f%% explained var.)', 
+                             100*m1$sdev[choices]^2/sum(m1$sdev^2)))
+u.axis.labs
+```
+
+## Biplot
+```{r,fig.width=7,fig.height=8}
+scl <- 20
+
+p1 <- ggplot(data = dt.rot,
+             aes(x = PC1,
+                 y = PC2)) +
+  facet_wrap(~ grp) +
+  geom_point(data = dt.scr,
+             aes(color = grp),
+             shape = ".",
+             alpha = 0.5) +
+  geom_segment(data = dt.rot,
+               aes(x = 0,
+                   y = 0,
+                   xend = scl*PC1,
+                   yend = scl*PC2),
+               arrow = arrow(length = unit(1/2, 'picas')),
+               color = "black",
+               inherit.aes = FALSE) +
+  geom_text(data = dt.rot,
+            aes(x = 1.1*scl*PC1,
+                y = 1.1*scl*PC2,
+                label = feat),
+            size = 2,
+            hjust = 0.5,
+            inherit.aes = FALSE) +
+  scale_x_continuous(u.axis.labs[1]) +
+  scale_y_continuous(u.axis.labs[2]) +
+  scale_color_discrete("") +
+  ggtitle("") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+tiff(filename = "tmp/pca_biplot.tiff",
+     width = 7,
+     height = 8,
+     units = 'in',
+     res = 300,
+     compression = "lzw+p")
+print(p1)
+graphics.off()
+
+p1
+```
+
+
+# Session
+```{r}
+sessionInfo()
+```
