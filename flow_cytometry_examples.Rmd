@@ -237,6 +237,8 @@ ggplot(dtl,
   theme(legend.position = "none")
 ```
 
+# Fluorochromes
+
 # 2D density plot
 Source: https://ggplot2.tidyverse.org/reference/geom_density_2d.html  
   
