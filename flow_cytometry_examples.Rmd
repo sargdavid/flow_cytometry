@@ -44,6 +44,7 @@ l1 <- lapply(X = fname,
 names(l1) <- fname
 
 head(l1[[1]])
+dim(l1[[1]])
 names(l1[[1]])
 ```
 
