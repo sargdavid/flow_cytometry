@@ -1,0 +1,65 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Setup
+```{r}
+## Install 'flowCore' package
+# if (!require("BiocManager",
+#              quietly = TRUE))
+#   install.packages("BiocManager")
+# BiocManager::install("flowCore")
+
+require(flowCore)
+require(data.table)
+require(ggplot2)
+require(datanugget)
+```
+
+# load data
+```{r}
+tmp <- read.FCS(filename = "Data/Patient_9_120min_Prednisone.fcs")
+dt1<-tmp@exprs
+tmp1 <- read.FCS(filename = "Data/AML/0001.FCS")
+AML<-tmp1@exprs
+tmp2 <- read.FCS(filename = "Data/HEU/0001.FCS")
+HEUvsUE1<-tmp2@exprs
+tmp8 <- read.FCS(filename = "Data/HEU/0002.FCS")
+HEUvsUE2<-tmp8@exprs
+tmp9 <- read.FCS(filename = "Data/HEU/0003.FCS")
+HEUvsUE3<-tmp9@exprs
+tmp3 <- read.FCS(filename = "Data/001.fcs")
+GvHD<-tmp3@exprs
+tmp4 <- read.FCS(filename = "Data/001.fcs")
+DLBCL<-tmp4@exprs
+tmp5 <- read.FCS(filename = "Data/WNV/001.fcs")
+WNV<-tmp5@exprs
+tmp6 <- read.FCS(filename = "Data/001.fcs")
+HSCT<-tmp6@exprs
+tmp7 <- read.FCS(filename = "Data/ND/001.fcs")
+ND<-tmp7@exprs
+
+tmp2 <- read.FCS(filename = "Data/HEU/0001.FCS")
+HEUvsUE1<-tmp2@exprs
+tmp8 <- read.FCS(filename = "Data/HEU/0002.FCS")
+HEUvsUE2<-tmp8@exprs
+tmp9 <- read.FCS(filename = "Data/HEU/0003.FCS")
+HEUvsUE3<-tmp9@exprs
+
+HEUvsUE<- rbind(HEUvsUE1,HEUvsUE2,HEUvsUE3)
+HEUvsUE_SC<- HEUvsUE[,1:2]
+HEUvsUE_SC<- as.data.frame(HEUvsUE_SC)
+HEUvsUE_dyes<- HEUvsUE[,3:10]
+HEUvsUE_dyes<- as.data.frame(HEUvsUE_dyes)
+HEUvsUE<- HEUvsUE[,1:10]
+HEUvsUE<- as.data.frame(HEUvsUE)
+
+my.DN = create.DN(x = HEUvsUE,
+                        RS.num = 10^5,
+                        DN.num1 = 10^4,
+                        DN.num2 = 2000)
+
+
+```
+
