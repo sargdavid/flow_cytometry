@@ -5,7 +5,7 @@ output: html_notebook
 
 # Setup
 ```{r}
-## Install 'flowCore' package
+# # Install 'flowCore' package
 # if (!require("BiocManager",
 #              quietly = TRUE))
 #   install.packages("BiocManager")
@@ -21,11 +21,16 @@ https://app.fluorofinder.com/dyes?gclid=Cj0KCQjwyt-ZBhCNARIsAKH1176G3SpZ4jKJg3nI
   
 Commonly Used Fluorochromes and Their Properties  
 https://www.umc.edu/cancerinstitute/Cancer-Research/Core-Facilities/Flow%20Cytometry%20Core/Resources/Commonly-Used-Fluorochromes-and-Properties.html 
+
+Quality control with flowAI:  
+https://bioconductor.org/packages/release/bioc/html/flowAI.html  
+https://bioconductor.org/packages/release/bioc/vignettes/flowAI/inst/doc/flowAI.html  
   
 # All Data
 Data Repository: https://flowrepository.org/public_experiment_representations 
 
-##  Data: 20190311 TOPRO GFP BFP mCherry PECy7 BV510
+#  Data: FR-FCM-ZZZU (20190311 TOPRO GFP BFP mCherry PECy7 BV510)
+## Load data
 Cell isolation by FACS of lncRNAs targeted with pgRNAs along BLaER1 transdifferentiation.  
 Source: https://flowrepository.org/experiments/3892/download_ziped_files  
   
@@ -48,7 +53,7 @@ dim(l1[[1]])
 names(l1[[1]])
 ```
 
-# Meta data
+## Meta data
 Source: https://flowrepository.org/experiments/3892  
   
 ```{r}
@@ -63,7 +68,7 @@ meta <- fread("Data/FlowRepository_FR-FCM-Z3PK_files/meta.csv",
               skip = 6)
 ```
 
-# Long data
+## Long data
 ```{r}
 dtl <- rbindlist(l1)
 dtl <- merge(meta,
@@ -91,18 +96,18 @@ dtl$Treatment <- factor(dtl$Treatment,
 summary(dtl)
 ```
 
-# Save data
+## Save data
 ```{r}
 save(dtl,
      file = "Data/dtl.RData")
 ```
 
-# START HERE: Reload data
+## START HERE: Reload data
 ```{r}
 load("Data/dtl.RData")
 ```
 
-# Forward scattering (FSC) vs. Side Scattering (SSC)
+## Forward scattering (FSC) vs. Side Scattering (SSC)
 FSC-A: Forward Scattering Area  
 FSC-H: Forward Scattering Height  
 SSC-A: Side Scattering Area  
@@ -110,8 +115,8 @@ SSC-H: Side Scattering Height
   
 Source: [A guide to gating in flow cytometry](https://www.bio-rad-antibodies.com/blog/a-guide-to-gating-in-flow-cytometry.html)
 
-# Singletons vs. cell clusters
-## Raw scale
+## Singletons vs. cell clusters
+### Raw scale
 ```{r,fig.width=6,fig.height=7}
 ggplot(dtl,
        aes(x = `FSC-A`,
@@ -419,6 +424,102 @@ graphics.off()
 
 p1
 ```
+
+# Data: FR-FCM-ZZZU
+## Load data
+```{r}
+fname <- list.files(path = "Data/FlowRepository_FR-FCM-ZZZU_files/",
+                    pattern = "\\.FCS$")
+fname
+
+l2 <- lapply(X = fname,
+             FUN = function(a) {
+               tmp <- read.FCS(paste0("Data/FlowRepository_FR-FCM-ZZZU_files/",
+                                      a))
+               return(data.table(`File Name` = a,
+                                 tmp@exprs))
+             })
+names(l2) <- fname
+
+head(l2[[1]])
+dim(l2[[1]])
+names(l2[[1]])
+```
+
+## Long data
+```{r}
+dtl <- rbindlist(l2)
+
+meta <- data.table(`File Name` = names(l2),
+                   Group = rep(c("UE",
+                                 "HUE"),
+                               each = 2))
+meta$Group <- factor(meta$Group,
+                     levels = unique(meta$Group))
+
+dtl <- merge(meta,
+             dtl,
+             by = "File Name")
+dtl$`File Name` <- factor(dtl$`File Name`,
+                          levels = unique(meta$`File Name`))
+
+summary(dtl)
+```
+
+## 
+```{r}
+dye <- data.table(dye = colnames(dtl)[5:12],
+                  protein = c("IFNa",
+                              "CD123",
+                              "MHCII",
+                              "CD14",
+                              "CD11c",
+                              "IL6",
+                              "IL12",
+                              "TNFa"))
+dye
+```
+
+## Save data
+```{r}
+save(dtl,
+     file = "Data/dtl_FR-FCM-ZZZU.RData")
+gc()
+```
+
+## START HERE: Reload data
+```{r}
+load("Data/dtl_FR-FCM-ZZZU.RData")
+```
+
+## Forward scattering (FSC) vs. Side Scattering (SSC)
+FSC-A: Forward Scattering Area  
+SSC-A: Side Scattering Area  
+FITC-A,  PE-A, PerCP-Cy5-5-A, PE-Cy7-A, APC-A, APC-Cy7-A,  Pacific Blue-A, Alex 700-A: florochromes   
+  
+Source: [A guide to gating in flow cytometry](https://www.bio-rad-antibodies.com/blog/a-guide-to-gating-in-flow-cytometry.html)
+
+## Singletons vs. cell clusters
+### Raw scale
+```{r,fig.width=6,fig.height=7}
+ggplot(dtl,
+       aes(x = `FSC-A`,
+           y = `SSC-A`,
+           color = Group)) +
+  facet_wrap(~ `File Name`) +
+  geom_point(shape = ".",
+             alpha = 0.3) +
+  # geom_density_2d() +
+  stat_density_2d(contour_var = "count",
+                  color = "black") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r}
+
+```
+
 
 # Session
 ```{r}

@@ -29,3 +29,9 @@ https://etransafe.eu/virtual-control-groups-one-step-forward-into-the-future-of-
 The eTRANSAFE Project on Translational Safety Assessment through Integrative Knowledge Management: Achievements and Perspectives
 https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7999019/
 
+References:
+1. Critical assessment of automated flow cytometry data analysis techniques
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3906045/#Sec22
+
+2. 
+
