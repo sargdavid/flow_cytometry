@@ -10,10 +10,21 @@ output: html_notebook
 #              quietly = TRUE))
 #   install.packages("BiocManager")
 # BiocManager::install("flowCore")
+# BiocManager::install("modreg")
 
 require(flowCore)
 require(data.table)
 require(ggplot2)
+
+# DNAMR Dependencies
+require(class)
+require(MASS)
+require(nnet)
+require(e1071)
+require(moments)
+require(modreg)
+
+require(DNAMR)
 ```
 
 Fluorescent Dye Directory:  
@@ -426,6 +437,13 @@ p1
 ```
 
 # Data: FR-FCM-ZZZU
+0001.FCS - UE, unstimulated  
+0008.FCS - UE, unstimulated  
+0003.FCS - UE, LPS stimulated  
+0010.FCS - UE, LPS stimulated  
+   
+UE - UN-EXPOSED infants; HUE - HIV-EXPOSED-UNINFECTED infants  
+  
 ## Load data
 ```{r}
 fname <- list.files(path = "Data/FlowRepository_FR-FCM-ZZZU_files/",
@@ -447,13 +465,18 @@ names(l2[[1]])
 ```
 
 ## Long data
+0001.FCS - UE, unstimulated  
+0003.FCS - UE, LPS stimulated  
+0008.FCS - UE, unstimulated 
+0010.FCS - UE, LPS stimulated 
+  
 ```{r}
 dtl <- rbindlist(l2)
 
 meta <- data.table(`File Name` = names(l2),
-                   Group = rep(c("UE",
-                                 "HUE"),
-                               each = 2))
+                   Group = rep(c("UE, unstimulated",
+                                 "UE, LPS stimulated"),
+                               2))
 meta$Group <- factor(meta$Group,
                      levels = unique(meta$Group))
 
@@ -516,8 +539,24 @@ ggplot(dtl,
   theme(legend.position = "none")
 ```
 
+## Histograms
 ```{r}
+trans2t(dtl$`FITC-A`)
 
+tmp <- dtl[, .(`trans FITC-A` = trans2t(`FITC-A`),
+               `trans PE-A` = trans2t(`PE-A`),
+               `trans PerCP-Cy5-5-A` = trans2t(`PerCP-Cy5-5-A`),
+               `trans PE-Cy7-A` = trans2t(`PE-Cy7-A`), 
+               `trans APC-A` = trans2t(`APC-A` ),
+               `trans APC-Cy7-A` = trans2t(`APC-Cy7-A`),
+               `trans Pacific Blue-A` = trans2t(`Pacific Blue-A`),
+               `trans Alex 700-A` = trans2t(`Pacific Blue-A`))]
+
+ggplot(dtl,
+       aes(x = log2(`FITC-A` - min(`FITC-A`) + 1))) +
+         facet_wrap(~ `File Name`) +
+         geom_histogram(bins = 100) +
+  theme_bw()
 ```
 
 
