@@ -1,0 +1,8 @@
+# BiocManager::install("CytoML",force = TRUE)
+require(CytoML)
+ws=open_flowjo_xml(file = "C:/Users/dsargsy/Downloads/FlowRepository_FR-FCM-ZYND_files/Surface_Marker_Flow_Cytometry_Analysis.wsp")
+ws
+
+fj_ws_get_samples(ws)
+
+fj_ws_get_samples(ws, group_id = 5)

@@ -1,0 +1,480 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+self-contained: true
+---
+
+# Setup
+
+```{r}
+# if (!require("BiocManager",
+#              quietly = TRUE))
+#     install.packages("BiocManager")
+# 
+# BiocManager::install("flowAI")
+
+library(flowCore)
+library(raster)
+require(geometry)
+library(pracma)
+library(MASS)
+# library(flowAI)
+```
+
+## Functions
+
+```{r}
+f.plot <- function(x,
+                   y,
+                   nr = 20, # number of rows
+                   nc = 20, # number of columns
+                   scale = c("raw", # row
+                             "l", # log (x + 1)
+                             "d"), # double log (x + 1)
+                   alpha = 0.1) { # lower threshold for values; set to 0 if below alpha
+  zx = c(1:nr,
+         rep(1,nc),
+         1+trunc(nr*(x- min(x))/(max(x)-min(x)) ))
+  zx[zx>nr] = nr 
+  zy = c(rep(1,nr),
+         1:nc,
+         1 + trunc(nc*(y- min(y))/(max(y)-min(y))))
+  zy[zy>nc] = nc
+  z = table(zx,zy)
+  z[,1]=z[,1]-1
+  z[1,]=z[1,]-1
+  if (scale=="l") z = log(1+z) 
+  if (scale=="d") z = log(1+log(1+z))
+  z[max(z)*alpha>z]=0
+  image(z=t(z),
+        x=seq(length=nr+1,
+              from=min(x),
+              to=max(x)),
+        y= seq(length=nc+1,
+               from=min(y),
+               to=max(y)),
+        xlab="",ylab="",
+        col=topo.colors(100))
+  list(z = t(z),
+       x = seq(length=nr,
+               from=min(x),
+               to=max(x)),
+       y = seq(length=nc,
+               from=min(y),
+               to=max(y)),
+       zz=cbind(zx,zy)[-(1:(nr+nc)),])
+}
+
+search.ind = function(x,
+                      idx,
+                      idy,
+                      threshold = 2) {
+  neighbor_x = x[max((ceil(idx)-threshold),1):min((ceil(idx)+threshold),nrow(x)),
+                 max((ceil(idy)-threshold),1):min((ceil(idy)+threshold),ncol(x))]
+  ind = which(neighbor_x == max(neighbor_x),arr.ind = TRUE)
+  idx_f = max((ceil(idx)-threshold),1)+ind[1,1]-1
+  idy_f = max((ceil(idy)-threshold),1)+ind[1,2]-1
+  c(idx_f, idy_f)
+}
+
+find_area <- function(x, 
+                      idx,
+                      idy,
+                      t1 = 35,
+                      t2 = 0.85) {
+  gr = cbind(rep(1:nrow(x),ncol(x)),rep(1:ncol(x),rep(nrow(x),ncol(x))))
+  d = as.matrix(dist(gr))
+  id = idx+(idy-1)*nrow(x)
+  gr[d[id,]<t1 & x>t2*x[id],2:1]
+}
+```
+
+## From Mahan, 4/9/2024
+
+```{r}
+qda_conv <- function(xx) {
+  x0<- sqrt((-min(min(xx[,2]),min(xx[,1])))+3+xx[,2])
+  y0<- sqrt((-min(min(xx[,2]),min(xx[,1])))+3+xx[,1])
+  f.density = f.plot(x0,y0,nr=100,nc=100,scale="l")
+  msize <- 100
+  x <- matrix(as.numeric(f.density$z),nrow = 100,ncol = 100)
+  r <- raster(x)
+  extent(r) <- extent(c(0, msize, 0, msize) + 0.1)
+  f <- function(X) if(max(X, na.rm=TRUE) > quantile(f.density$z,0.85)){max(X, na.rm=TRUE)}else{-1}
+  ww <- matrix(1, nrow=9, ncol=9) ## Weight matrix for cells in moving window
+  localmax <- focal(r, fun=f, w=ww, pad=TRUE, padValue=NA)
+  r2 <- r==localmax
+  maxXY <- xyFromCell(r2, Which(r2==1, cells=TRUE))
+  maxXY_rot = cbind(100-maxXY[,2],maxXY[,1])
+  idx_f = t(as.matrix(apply(as.matrix(maxXY_rot), 1, function(t){search.ind(x, t[1],t[2])})))
+  idx_f = idx_f[idx_f[,1] <90 & idx_f[,2] <90,]
+  idx_f = idx_f[x[idx_f] > quantile(x,0.9),]
+  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
+  for (i in (nrow(idx_f)-2):1){
+    if (nrow(idx_f)>3 & idx_f[i,][1]==idx_f[i+1,][1] & idx_f[i,][2]==idx_f[i+1,][2]){
+      idx_f= idx_f[c(1:i,(i+2):nrow(idx_f)),]
+    }
+  }
+  for (i in nrow(idx_f):3){
+    if (nrow(idx_f)>3 & idx_f[i,][1]==idx_f[i-1,][1] & idx_f[i,][2]==idx_f[i-1,][2]){
+      idx_f= idx_f[c(1:(i-2),i:nrow(idx_f)),]
+    }
+  }
+  if (nrow(idx_f)>3 & idx_f[1,1]> (idx_f[2,1]-11) & x[idx_f][1]< x[idx_f][2]){
+    idx_f= idx_f[2:nrow(idx_f),]
+  }
+  for (i in nrow(idx_f):2){
+    if (nrow(idx_f)>3 & idx_f[i,][1]< (idx_f[1,1]+11) & x[idx_f][i]<=x[idx_f][1]){
+      idx_f= idx_f[c(1:(i-1),(i+1):nrow(idx_f)),]
+    }
+  }
+  if (nrow(idx_f)>3 & idx_f[nrow(idx_f),1]< (idx_f[(nrow(idx_f)-1),1]+11) & x[idx_f][nrow(idx_f)]< x[idx_f][(nrow(idx_f)-1)]){
+    idx_f= idx_f[1:(nrow(idx_f)-1),]
+  }
+  for (i in (nrow(idx_f)-1):1){
+    if (nrow(idx_f)>3 & idx_f[i,][1]> (idx_f[nrow(idx_f),1]-11) & x[idx_f][i]<=x[idx_f][nrow(idx_f)]){
+      idx_f= idx_f[-i,]
+    }
+  }
+  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
+  idx_f = idx_f[sort(x[idx_f],index.return = TRUE,decreasing = T)$ix[1:3],]
+  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
+  dat1 = find_area(x,idx_f[1,1],idx_f[1,2],t1 = 10, t2 = 0.74)
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat1[,2]], y = f.density$y[dat1[,1]])
+  dat2 = find_area(x,idx_f[2,1],idx_f[2,2],t1 = 12, t2 = 0.71)
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat2[,2]], y = f.density$y[dat2[,1]])
+  dat3 = find_area(x,idx_f[3,1],idx_f[3,2],t1 = 12, t2 = 0.83)
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat3[,2]], y = f.density$y[dat3[,1]])
+  dat12<- rbind(cbind(dat1,0),cbind(dat2,1),cbind(dat3,0))
+  dat12=data.frame(dat12)
+  qda2<- qda(X3~.,data=dat12)
+  dat_conv<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.60)
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat_conv[,2]], y = f.density$y[dat_conv[,1]])
+  datt<- cbind(f.density$x[dat_conv[,2]],f.density$y[dat_conv[,1]])
+  dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.75)
+  for (i in nrow(dat):1){
+    if (dat[i,][1]>90 | dat[i,][2]>90){
+      dat= dat[-i,]
+    }
+  }
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat[,2]], y = f.density$y[dat[,1]])
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])<220 & length(f.density$x[dat[,2]])<1100){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.74)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])<220 & length(f.density$x[dat[,2]])<1100){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.73)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])<220 & length(f.density$x[dat[,2]])<1100){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.72)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])<220 & length(f.density$x[dat[,2]])<1100){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.71)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.77)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.79)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.81)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.83)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.85)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.86)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.87)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.88)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.89)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.90)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.91)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.92)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.93)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  if (length(f.density$x[dat[,2]][pop123==1])>300 | length(f.density$x[dat[,2]])>1150){
+    dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.94)
+    for (i in nrow(dat):1){
+      if (dat[i,][1]>90 | dat[i,][2]>90){
+        dat= dat[-i,]
+      }
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat[,2]], y = f.density$y[dat[,1]],col=as.numeric(pop123)+5)
+  #image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  #points(x = f.density$x[dat[,2]][pop123==1], y = f.density$y[dat[,1]][pop123==1],col="deeppink2",pch=16)
+  lymph<- cbind(f.density$x[dat[,2]][pop123==1],f.density$y[dat[,1]][pop123==1])
+  ch<- convhulln(lymph)
+  c<- chull(lymph)
+  coords <- lymph[c(c, c[1]), ]
+  image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  points(x = f.density$x[dat[,2]][pop123==1], y = f.density$y[dat[,1]][pop123==1],col="deeppink2",pch=16)
+  points(x = f.density$x[dat[,2]][pop123==1][ch], y = f.density$y[dat[,1]][pop123==1][ch],col="blue",pch=16)
+  lines(coords, col="blue")
+  #lines(lymph[c,])
+  image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  points(x = f.density$x[dat[,2]][pop123==1], y = f.density$y[dat[,1]][pop123==1],col="deeppink2",pch=16)
+  inhulln(ch, datt)
+  image(z = f.density$z, x = f.density$x, y = f.density$y,col = topo.colors(100))
+  points(x = f.density$x[dat_conv[,2]][inhulln(ch, datt)==TRUE], y = f.density$y[dat_conv[,1]][inhulln(ch, datt)==TRUE],col="deeppink2",pch=16)
+}
+```
+
+# Data
+
+## FCS files
+
+```{r}
+# dt1 <- flowCore::read.FCS("../Data/FlowRepository_FR-FCM-ZZZU_files/0001.FCS")
+dt1 <- flowCore::read.flowSet(files = c("0001.FCS", # UE Unstim ID=21
+                                        "0003.FCS"), # UE LPS ID=21
+                              # phenoData = data.frame(trt = c("A",
+                              #                                "B")), # ADD THIS INFO FROM META FILE
+                              path = "../Data/FlowRepository_FR-FCM-ZZZU_files/")
+dt1@phenoData
+dt1@frames$`0001.FCS`
+t1 <- dt1@frames$`0001.FCS`@exprs
+head(t1)
+```
+
+## Compensation
+
+Questions for Maggie:
+
+1.  Should spillover matrix be specified somewhere or is it always an identity
+2.  Same for all files?
+
+```{r}
+dt1 <- compensate(x = dt1,
+                  spillover = spillover(dt1@frames$`0001.FCS`)$SPILL)
+```
+
+## Transformation
+
+Double-exponential
+
+Check options!
+
+```{r}
+dt_lg <- estimateLogicle(x = dt1@frames$`0001.FCS`,
+                         channels = colnames(dt1@frames$`0001.FCS`)[3:10])
+dt_lg@transforms$`FITC-A`@output
+dt_lg@transforms$`FITC-A`@input
+dt_lg@transforms$`FITC-A`@f
+```
+
+```{r}
+dt1 <- transform(`_data` = dt1,
+                 dt_lg)
+```
+
+```{r}
+gc()
+```
+
+## Plot
+
+```{r,fig.width=6,fig.height=6}
+for (i in 1:length(dt1@frames)) {
+  a <- dt1[[i]]@exprs
+  
+  tiff(filename = paste("../Tmp/",
+                        names(dt1@frames)[i],
+                        ".tiff"),
+       height = 6,
+       width = 6,
+       units = 'in',
+       res = 600,
+       compression = "lzw+p")
+  
+  f.plot(x = a[, 2],
+         y = a[, 1],
+         nr = 100,
+         nc = 100,
+         scale = "l")
+  
+  graphics.off()
+  
+  f.plot(x = a[, 2],
+         y = a[, 1],
+         nr = 100,
+         nc = 100,
+         scale = "l")
+}
+```
+
+# Get lymposytes
+
+```{r,fig.width=6,fig.height=6}
+dt2 <- list()
+
+for (i in 1:length(dt1@frames)) {
+  dt2[[i]] <- qda_conv(xx = dt1[[i]]@exprs)
+}
+```

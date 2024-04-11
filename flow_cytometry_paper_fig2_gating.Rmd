@@ -1,0 +1,163 @@
+---
+title: "Flow Cytometry Paper Figure 2"
+output: html_notebook
+---
+
+# Setup
+```{r}
+# # Install 'flowCore' package
+# if (!require("BiocManager",
+#              quietly = TRUE))
+#   install.packages("BiocManager")
+# BiocManager::install("flowCore")
+# BiocManager::install("modreg")
+
+require(flowCore)
+require(data.table)
+require(ggplot2)
+```
+
+Data Downloaded From:  
+http://flowrepository.org/experiments/30/download_ziped_files  
+  
+Fluorescent Dye Directory:  
+https://app.fluorofinder.com/dyes?gclid=Cj0KCQjwyt-ZBhCNARIsAKH1176G3SpZ4jKJg3nIZvZKAzYVae4ToSHajbJNHrPKx6usUlVIhUDt3bAaAkBmEALw_wcB  
+  
+Commonly Used Fluorochromes and Their Properties  
+https://www.umc.edu/cancerinstitute/Cancer-Research/Core-Facilities/Flow%20Cytometry%20Core/Resources/Commonly-Used-Fluorochromes-and-Properties.html 
+
+Quality control with flowAI:  
+https://bioconductor.org/packages/release/bioc/html/flowAI.html  
+https://bioconductor.org/packages/release/bioc/vignettes/flowAI/inst/doc/flowAI.html  
+  
+# All Data
+Data Repository: https://flowrepository.org/public_experiment_representations 
+
+#  Data: FR-FCM-ZZZU (20190311 TOPRO GFP BFP mCherry PECy7 BV510)
+## Load data
+Cell isolation by FACS of lncRNAs targeted with pgRNAs along BLaER1 transdifferentiation.  
+Source: https://flowrepository.org/experiments/3892/download_ziped_files  
+  
+```{r}
+fname <- list.files(path = "Data/FCS Files for the paper/",
+                    pattern = "\\.FCS$")
+fname
+
+l1 <- lapply(X = fname,
+             FUN = function(a) {
+               tmp <- read.FCS(paste0("Data/FCS Files for the paper/",
+                                      a))
+               return(data.table(`File Name` = a,
+                                 tmp@exprs))
+             })
+names(l1) <- fname
+
+head(l1[[1]])
+dim(l1[[1]])
+names(l1[[1]])
+```
+
+```{r}
+dt1 <- l1[[1]]
+head(dt1)
+```
+
+```{r, fig.width=4,fig.height=4}
+p1 <- ggplot(dt1,
+             aes(y = `SSC-A`,
+                 x = `FSC-A`)) +
+  geom_point(shape = ".",
+             color = "grey") +
+  geom_density_2d() +
+  geom_rect(aes(ymin = 100,
+                ymax = 3*10^4,
+                xmin = 2*10^4,
+                xmax = 6*10^4),
+            color = "red",
+            alpha = 0) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+p1
+```
+
+```{r, fig.width=4,fig.height=4}
+p2 <- ggplot(dt1,
+             aes(y = `SSC-A`,
+                 x = `FSC-A`)) +
+  geom_point(shape = ".",
+             color = "grey") +
+  geom_density_2d() +
+  geom_rect(aes(ymin = 100,
+                ymax = 3*10^4,
+                xmin = 2*10^4,
+                xmax = 6*10^4),
+            color = "red",
+            alpha = 0) +
+  ylim(100, 3*10^4) +
+  xlim(2*10^4, 6*10^4) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+p2
+```
+
+```{r}
+dt2 <- dt1[`SSC-A` >= 100 &
+             `SSC-A` <= 3*10^4 &
+             `FSC-A` >= 2*10^4 &
+             `FSC-A` <= 6*10^4 &
+             `PE-A` < 1000 &
+             `APC-A` < 100, ]
+```
+
+```{r, fig.width=4,fig.height=4}
+p3 <- ggplot(dt2,
+             aes(y = `PE-A`,
+                 x = `APC-A`)) +
+  geom_point(shape = ".",
+             color = "grey") +
+  geom_density_2d() +
+  geom_rect(aes(ymin = 170,
+                ymax = 450,
+                xmin = 13,
+                xmax = 100),
+            color = "red",
+            alpha = 0) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+p3
+```
+
+```{r}
+dt3 <- dt1[`PE-A` >= 100 &
+             `PE-A` <= 3*10^4 &
+             `APC-A` >= 2*10^4 &
+             `APC-A` <= 6*10^4, ]
+```
+
+
+```{r, fig.width=4,fig.height=4}
+p4 <- ggplot(dt3,
+             aes(y = `PerCP-Cy5-5-A`,
+                 x = `PE-Cy7-A`)) +
+  geom_point(shape = ".",
+             color = "grey") +
+  geom_density_2d() +
+  # geom_rect(aes(ymin = 170,
+  #               ymax = 450,
+  #               xmin = 13,
+  #               xmax = 100),
+  #           color = "red",
+  #           alpha = 0) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+p4
+```
+
+# Session
+```{r}
+sessionInfo()
+```

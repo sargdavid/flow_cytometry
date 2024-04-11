@@ -33,5 +33,30 @@ References:
 1. Critical assessment of automated flow cytometry data analysis techniques
 https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3906045/#Sec22
 
-2. 
+Notes:
+1. FlowJo has an addon ezxDAFi (easy Directed Automated Filtering and identification o cell populations)  pluging: superwised clusterig for FlowJo:
+https://www.youtube.com/watch?v=C-0MZ3hYWbY
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6030426/
+
+2. Sandy Hayes is a pro on flow cyt in oncology
+
+3. FlowJo has 30-day free trial if needed.
+
+Maggie, 6/14/23
+CD3+  = T-cells
+CD4+ = monocyte
+Can do intercellular staining for cytokine secretion
+Spectral flow cytometry
+Stain Index = each fluorochrome has different stain intensity. For more abundant proteins use dimmer flours; for less abundant ones - brighter flour.
+Use colors that are maximally spread out (in terms of wave length)
+FSC-A ~ SSC-A = separate debries
+FSC-A ~ FSC-H = separate singlets
+Comp-APC-Cy7-A ~ SSC-A = separate live cells
+Always ask for compansation file along with FCS files!
+Check total number of events (= cells)! If pipet gets clogged, only debrees will pass through and /or total number of events will go down.
+Make sure thetre are enough events in the gates (>100? >1,000?)
+Rarify samples?y0
+
+
+
 
