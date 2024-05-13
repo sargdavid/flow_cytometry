@@ -1,8 +1,11 @@
 ---
-title: "Untitled"
+title: "HIV Exposed vs. Unexposed Infant Samples Treated with LPS vs. Control"
 format: html
-editor: visual
+editor: source
 self-contained: true
+toc: true
+toc-depth: 6
+toc-location: right
 ---
 
 # Setup
@@ -14,12 +17,15 @@ self-contained: true
 # 
 # BiocManager::install("flowAI")
 
-library(flowCore)
-library(raster)
+require(data.table)
+require(ggplot2)
+
+require(flowCore)
+require(raster)
 require(geometry)
-library(pracma)
-library(MASS)
-# library(flowAI)
+require(pracma)
+require(MASS)
+# require(flowAI)
 ```
 
 ## Functions
@@ -90,7 +96,9 @@ find_area <- function(x,
 }
 ```
 
-## From Mahan, 4/9/2024
+# From Mahan, 4/9/2024
+
+## Main Function
 
 ```{r}
 qda_conv <- function(xx) {
@@ -386,7 +394,7 @@ qda_conv <- function(xx) {
 }
 ```
 
-# Data
+## Data
 
 ## FCS files
 
@@ -469,7 +477,7 @@ for (i in 1:length(dt1@frames)) {
 }
 ```
 
-# Get lymposytes
+## Get lymposytes
 
 ```{r,fig.width=6,fig.height=6}
 dt2 <- list()
@@ -477,4 +485,160 @@ dt2 <- list()
 for (i in 1:length(dt1@frames)) {
   dt2[[i]] <- qda_conv(xx = dt1[[i]]@exprs)
 }
+```
+
+
+# Mahan's lymposyte data, 5/13/2024
+## Meta-data
+```{r}
+dt_meta <- fread("../Data/Mahan_05132024/HEUvsUE.csv")
+```
+
+## Load lymposite data
+
+```{r}
+load("../Data/Mahan_05132024/HEU_Control_lymph.RData")
+load("../Data/Mahan_05132024/UE_Control_lymph.RData")
+
+ctrl <- c(HEU_Control_lymph,
+          UE_Control_lymph)
+
+# Subject number
+names(ctrl) <- do.call("c", 
+                       lapply(ctrl,
+                              function(a) {
+                                return(a[1, 13])
+                              }))
+
+load("../Data/Mahan_05132024/HEU_LPS_lymph.RData")
+load("../Data/Mahan_05132024/UE_LPS_lymph.RData")
+
+lps <- c(HEU_LPS_lymph,
+         UE_LPS_lymph)
+
+# Subject number
+names(lps) <- do.call("c", 
+                      lapply(lps,
+                             function(a) {
+                               return(a[1, 13])
+                             }))
+
+rm(HEU_Control_lymph,
+   HEU_LPS_lymph,
+   UE_Control_lymph,
+   UE_LPS_lymph)
+gc()
+```
+
+## Normalize to Control means and SD
+Data is normalized within patient by subtracting the mean of each protein in Control from LPS, divided by SD of the control.  
+```{r}
+subj <- names(ctrl)
+
+delta <- list()
+
+for (i in 1:length(subj)) {
+  sx_ctrl <- ctrl[[subj[i]]]
+  sx_lps <- lps[[subj[i]]]
+  
+  out <- list()
+  for (j in 3:10) {
+    out[[j - 2]] <- (sx_lps[, j] - mean(sx_ctrl[, j]))/sd(sx_ctrl[, j])
+  }
+  
+  delta[[i]] <- data.table(sx_lps[, 13],
+                           do.call("cbind",
+                                   out))
+  
+  names(delta[[i]]) <- c("Subject",
+                         colnames(sx_lps)[3:10])
+}
+
+names(delta) <- subj
+```
+
+## Combine normalized data
+
+```{r}
+dt1 <- rbindlist(delta)
+tmp <- unique(data.table(Subject = as.character(dt_meta$Individual),
+                         Exposure = dt_meta$Condition))
+
+dt1$Subject <- as.character(dt1$Subject)
+
+dt1 <- merge(tmp,
+             dt1,
+             by = "Subject")
+
+dt1$Subject <- factor(dt1$Subject,
+                      levels = unique(dt1$Subject))
+
+dt1$Exposure <- factor(dt1$Exposure,
+                       levels = c("UE",
+                                  "HEU"))
+
+# rm(list = ls()[ls() != "dt1"])
+
+save(dt1,
+     file = "../Tmp/dt1.RData")
+
+head(dt1)
+
+gc()
+```
+
+## Explore: single subject (#36)
+### Control
+```{r}
+s36_ctrl <- data.table(ctrl$`36`)
+head(s36_ctrl)
+```
+
+```{r,fig.width=5,fig.height=5}
+ggplot(s36_ctrl,
+       aes(x = log10(`FSC-A`),
+           y = log10(`SSC-A`))) +
+  geom_point(shape = ".") +
+  theme_bw()
+```
+
+```{r,fig.width=5,fig.height=4}
+for (i in 1:10) {
+  p1 <- ggplot(s36_ctrl[, i, with = FALSE],
+               aes(x = s36_ctrl[[i]])) +
+    geom_histogram(fill = "white",
+                   color = "green") +
+    ggtitle(names(s36_ctrl)[i])
+    print(p1)
+}
+```
+
+### LPS
+```{r}
+s36_lps <- data.table(lps$`36`)
+head(s36_lps)
+```
+
+```{r,fig.width=6,fig.height=6}
+ggplot(s36_lps,
+       aes(x = log10(`FSC-A`),
+           y = log10(`SSC-A`))) +
+  geom_point(shape = ".") +
+  theme_bw()
+```
+
+```{r,fig.width=5,fig.height=4}
+for (i in 1:10) {
+  p1 <- ggplot(s36_lps[, i, with = FALSE],
+               aes(x = s36_lps[[i]])) +
+    geom_histogram(fill = "white",
+                   color = "green") +
+    ggtitle(names(s36_lps)[i])
+    print(p1)
+}
+```
+
+# Session
+```{r}
+sessionInfo()
 ```
