@@ -121,7 +121,22 @@ find_area <- function(x,
 NOTE: make this generic to find any subpopulation in FSC vs. SSC plot
 ```{r}
 lympho_finder_convex<- function(fsc_a, 
-                                ssc_a) { 
+                                ssc_a,
+                                n_row = 9,
+                                n_col = 9,
+                                max_x = 90,
+                                max_y = 90,
+                                qntl = 0.90,
+                                t11 = 10,
+                                t21 = 0.74,
+                                t12 = 12,
+                                t22 = 0.71,
+                                t13 = 12,
+                                t23 = 0.83,
+                                t14 = 80,
+                                t24 = 0.6,
+                                t15 = 80,
+                                t25 = 0.75) { 
   x0 <- sqrt((-min(min(ssc_a),
                    min(fsc_a))) + 3 + ssc_a)
   y0 <- sqrt((-min(min(ssc_a),
@@ -142,8 +157,8 @@ lympho_finder_convex<- function(fsc_a,
                         msize) + 0.1)
   f <- function(X) if(max(X, na.rm = TRUE) > quantile(f.density$z,0.85)){max(X, na.rm = TRUE)} else {-1}
   ww <- matrix(1, 
-               nrow = 9,
-               ncol = 9) # weight matrix for cells in moving window
+               nrow = n_row,
+               ncol = n_col) # weight matrix for cells in moving window
   localmax <- focal(r, 
                     fun = f,
                     w = ww,
@@ -158,96 +173,114 @@ lympho_finder_convex<- function(fsc_a,
   idx_f <- t(as.matrix(apply(as.matrix(maxXY_rot),
                              1,
                              function(t) {search.ind(x, t[1],t[2])})))
-  idx_f <- idx_f[idx_f[,1] <90 & 
-                   idx_f[,2] <90,]
-  idx_f <- idx_f[x[idx_f] > quantile(x,0.90),]
+  idx_f <- idx_f[idx_f[,1] < max_x & 
+                   idx_f[,2] < max_y,]
+  idx_f <- idx_f[x[idx_f] > quantile(x, qntl),]
   idx_f <- unique(idx_f)
-  for (i in (nrow(idx_f)-1):1) {
-    if (isTRUE(nrow(idx_f) > 3 &
-               (idx_f[i,][1] >= (idx_f[(i+1),][1]-8)) &
-               (idx_f[i,][2]>=(idx_f[(i+1),][2]-12)) &
-               (idx_f[i,][2]<=(idx_f[(i+1),][2]+12)) &
-               (x[idx_f][i]<x[idx_f][(i+1)]))){
-      idx_f= idx_f[-i,]
-    } else if (isTRUE(nrow(idx_f) > 3 &
-                      (idx_f[i,][1]>=(idx_f[(i+1),][1]-8)) &
-                      (idx_f[i,][2]>=(idx_f[(i+1),][2]-12)) &
-                      (idx_f[i,][2]<=(idx_f[(i+1),][2]+12)) &
-                      (x[idx_f][i]>=x[idx_f][(i+1)]))) {
-      idx_f= idx_f[-(i+1),]
-    }
-  }
-  for (i in (nrow(idx_f) - 2):1){
-    if (isTRUE((nrow(idx_f) > 3 & (idx_f[i,][1]>=(idx_f[(i+2),][1]-8)) &
-                (idx_f[i,][2] >= (idx_f[(i+2),][2]-12)) &
-                (idx_f[i,][2] <= (idx_f[(i+2),][2]+12)) &
-                (x[idx_f][i] < x[idx_f][(i+2)])))) {
-      idx_f= idx_f[-i,]
-    }
-    else if (isTRUE(nrow(idx_f) > 3 &
-                    (idx_f[i,][1] >= (idx_f[(i+2),][1]-8)) &
-                    (idx_f[i,][2] >= (idx_f[(i+2),][2]-12)) &
-                    (idx_f[i,][2] <= (idx_f[(i+2),][2]+12)) &
-                    (x[idx_f][i] >= x[idx_f][(i+2)]))) {
-      idx_f= idx_f[-(i+2),]
-    }
-  }
-  # DS, 9/9/24: commented out this section
-  # START COMMENT OUT
   
-  for (i in (nrow(idx_f) - 3):1) {
-    if (nrow(idx_f) > 3 &
-        (idx_f[i,][1] >= (idx_f[(i+3),][1]-8)) &
-        (idx_f[i,][2] >= (idx_f[(i+3),][2]-12)) &
-        (idx_f[i,][2] <= (idx_f[(i+3),][2]+12)) &
-        (x[idx_f][i] <=x [idx_f][(i+3)])){
-      idx_f= idx_f[-i,]
-    }
-    else if (nrow(idx_f) > 3 &
-             (idx_f[i,][1] >= (idx_f[(i+3),][1]-8)) &
-             (idx_f[i,][2] >= (idx_f[(i+3),][2]-12)) &
-             (idx_f[i,][2] <= (idx_f[(i+3),][2]+12)) &
-             (x[idx_f][i] > x[idx_f][(i+3)])) {
-      idx_f= idx_f[-(i+3),]
+  # for (i in (nrow(idx_f)-1):1) {
+  #   if (isTRUE(nrow(idx_f) > 3 &
+  #              (idx_f[i,][1] >= (idx_f[(i+1),][1]-8)) &
+  #              (idx_f[i,][2]>=(idx_f[(i+1),][2]-12)) &
+  #              (idx_f[i,][2]<=(idx_f[(i+1),][2]+12)) &
+  #              (x[idx_f][i]<x[idx_f][(i+1)]))){
+  #     idx_f= idx_f[-i,]
+  #   } else if (isTRUE(nrow(idx_f) > 3 &
+  #                     (idx_f[i,][1]>=(idx_f[(i+1),][1]-8)) &
+  #                     (idx_f[i,][2]>=(idx_f[(i+1),][2]-12)) &
+  #                     (idx_f[i,][2]<=(idx_f[(i+1),][2]+12)) &
+  #                     (x[idx_f][i]>=x[idx_f][(i+1)]))) {
+  #     idx_f= idx_f[-(i+1),]
+  #   }
+  # }
+  # for (i in (nrow(idx_f) - 2):1){
+  #   if (isTRUE((nrow(idx_f) > 3 & (idx_f[i,][1]>=(idx_f[(i+2),][1]-8)) &
+  #               (idx_f[i,][2] >= (idx_f[(i+2),][2]-12)) &
+  #               (idx_f[i,][2] <= (idx_f[(i+2),][2]+12)) &
+  #               (x[idx_f][i] < x[idx_f][(i+2)])))) {
+  #     idx_f= idx_f[-i,]
+  #   }
+  #   else if (isTRUE(nrow(idx_f) > 3 &
+  #                   (idx_f[i,][1] >= (idx_f[(i+2),][1]-8)) &
+  #                   (idx_f[i,][2] >= (idx_f[(i+2),][2]-12)) &
+  #                   (idx_f[i,][2] <= (idx_f[(i+2),][2]+12)) &
+  #                   (x[idx_f][i] >= x[idx_f][(i+2)]))) {
+  #     idx_f= idx_f[-(i+2),]
+  #   }
+  # }
+  # 
+  # for (i in (nrow(idx_f) - 3):1) {
+  #   if (nrow(idx_f) > 3 &
+  #       (idx_f[i,][1] >= (idx_f[(i+3),][1]-8)) &
+  #       (idx_f[i,][2] >= (idx_f[(i+3),][2]-12)) &
+  #       (idx_f[i,][2] <= (idx_f[(i+3),][2]+12)) &
+  #       (x[idx_f][i] <=x [idx_f][(i+3)])){
+  #     idx_f= idx_f[-i,]
+  #   }
+  #   else if (nrow(idx_f) > 3 &
+  #            (idx_f[i,][1] >= (idx_f[(i+3),][1]-8)) &
+  #            (idx_f[i,][2] >= (idx_f[(i+3),][2]-12)) &
+  #            (idx_f[i,][2] <= (idx_f[(i+3),][2]+12)) &
+  #            (x[idx_f][i] > x[idx_f][(i+3)])) {
+  #     idx_f= idx_f[-(i+3),]
+  #   }
+  # }
+  # 
+  # idx_f <- idx_f[sort(x[idx_f],
+  #                     index.return = TRUE,
+  #                     decreasing = T)$ix,]
+  # for (i in nrow(idx_f):2) {
+  #   if (nrow(idx_f) > 3 &
+  #       idx_f[i,][1] > idx_f[1,][1] &
+  #       idx_f[i,][1] < (idx_f[1,][1]+15) &
+  #       (idx_f[i,][2] <= (idx_f[1,][2]+20))) {
+  #     idx_f= idx_f[-i,]
+  #   }
+  # }
+  # idx_f <- idx_f[sort(x[idx_f],
+  #                     index.return = TRUE,
+  #                     decreasing = T)$ix[1:3],]
+  # idx_f <- idx_f[order(idx_f[,1],
+  #                      decreasing=FALSE),]
+  # idx_f <- idx_f[sort(x[idx_f],
+  #                     index.return = TRUE,
+  #                     decreasing = T)$ix,]
+  
+  if (nrow(idx_f)>3 & idx_f[1,1]> (idx_f[2,1]-11) & x[idx_f][1]< x[idx_f][2]){
+    idx_f= idx_f[2:nrow(idx_f),]
+  }
+  for (i in nrow(idx_f):2){
+    if (nrow(idx_f)>3 & idx_f[i,][1]< (idx_f[1,1]+11) & x[idx_f][i]<=x[idx_f][1]){
+      idx_f= idx_f[c(1:(i-1),(i+1):nrow(idx_f)),]
     }
   }
-  
-  # END COMMENT OUT
-  
-  idx_f <- idx_f[sort(x[idx_f],
-                      index.return = TRUE,
-                      decreasing = T)$ix,]
-  for (i in nrow(idx_f):2) {
-    if (nrow(idx_f) > 3 &
-        idx_f[i,][1] > idx_f[1,][1] &
-        idx_f[i,][1] < (idx_f[1,][1]+15) &
-        (idx_f[i,][2] <= (idx_f[1,][2]+20))) {
+  if (nrow(idx_f)>3 & idx_f[nrow(idx_f),1]< (idx_f[(nrow(idx_f)-1),1]+11) & x[idx_f][nrow(idx_f)]< x[idx_f][(nrow(idx_f)-1)]){
+    idx_f= idx_f[1:(nrow(idx_f)-1),]
+  }
+  for (i in (nrow(idx_f)-1):1){
+    if (nrow(idx_f)>3 & idx_f[i,][1]> (idx_f[nrow(idx_f),1]-11) & x[idx_f][i]<=x[idx_f][nrow(idx_f)]){
       idx_f= idx_f[-i,]
     }
   }
-  idx_f <- idx_f[sort(x[idx_f],
-                      index.return = TRUE,
-                      decreasing = T)$ix[1:3],]
-  idx_f <- idx_f[order(idx_f[,1],
-                       decreasing=FALSE),]
-  idx_f <- idx_f[sort(x[idx_f],
-                      index.return = TRUE,
-                      decreasing = T)$ix,]
+  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
+  idx_f = idx_f[sort(x[idx_f],index.return = TRUE,decreasing = T)$ix[1:3],]
+  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
+  
   dat1 <- find_area(x,
                     idx_f[1,1],
                     idx_f[1,2],
-                    t1 = 8,
-                    t2 = 0.75)
+                    t1 = t11,
+                    t2 = t21)
   dat2 <- find_area(x,
                     idx_f[2,1],
                     idx_f[2,2],
-                    t1 = 6,
-                    t2 = 0.80)
+                    t1 = t12,
+                    t2 = t22)
   dat3 <- find_area(x,
                     idx_f[3,1],
                     idx_f[3,2],
-                    t1 = 6,
-                    t2 = 0.85)
+                    t1 = t13,
+                    t2 = t23)
   dat12 <- rbind(cbind(dat1,1),
                  cbind(dat2,0),
                  cbind(dat3,0))
@@ -257,17 +290,17 @@ lympho_finder_convex<- function(fsc_a,
   dat_conv <- find_area(x,
                         idx_f[1,1],
                         idx_f[1,2],
-                        t1 = 50,
-                        t2 = 0.4)
+                        t1 = t14,
+                        t2 = t24)
   datt <- cbind(f.density$x[dat_conv[,2]],
                 f.density$y[dat_conv[,1]])
   dat <- find_area(x,idx_f[1,1],
                    idx_f[1,2],
-                   t1 = 80,
-                   t2 = 0.61)
+                   t1 = t15,
+                   t2 = t25)
   for (i in nrow(dat):1){
-    if (dat[i,][1] > 90 | 
-        dat[i,][2] > 90){
+    if (dat[i,][1] > max_x | 
+        dat[i,][2] > max_y){
       dat= dat[-i,]
     }
   }
@@ -662,7 +695,7 @@ dt_meta
 
 ```{r}
 dt_meta <- dt_meta[Treatment %in% c("unstim",
-                                      "LPS")]
+                                    "LPS")]
 ```
 
 ## FCS data
@@ -755,6 +788,88 @@ dt_fluors$desc <- gsub(x = dt_fluors$desc,
 dt_fluors
 ```
 
+# TROUBLESHOOTING
+
+NOTE1: Davit commented out a part of ... code because of the following error:  
+** Error in if (nrow(idx_f) > 3 & (idx_f[i, ][1] >= (idx_f[(i + 3), ][1] -  :**  
+**  argument is of length zero**   
+
+NOTE2: we are probably using the wrong cluster (landmark) to identify lyphosites.  
+
+```{r, fig.width=6,fig.height=6}
+i=2
+
+dt_meta[dt_meta$File == names(dt_exp)[i], ]
+a=dt_exp[[i]]
+
+row_keep <- list()
+class(a)
+dim(a)
+
+range(a[, 2])
+range(a[, 1])
+
+p1 <- f.plot(x = a[, 2],
+             y = a[, 1],
+             nr = 100,
+             nc = 100,
+             scale = "l")
+image(p1)
+
+range(log(a[, 2] - min(a[, 2]) + 1))
+range(log(a[, 1]))
+
+p2 <- f.plot(x = log(a[, 2] - min(a[, 2]) + 1),
+             y = log(a[, 1]),
+             nr = 100,
+             nc = 100,
+             scale = "l")
+image(p2)
+# image(p2,
+#       ylim = c(10, 12.5))
+
+row_keep[[1]] <- lympho_finder_convex(fsc_a = a[, 1],
+                                      ssc_a = a[, 2])
+
+dt_exp_lymp <- list()
+dt_exp_lymp[[1]] <- a[row_keep[[1]] == TRUE, ]
+
+class(dt_exp_lymp[[1]])
+dim(dt_exp_lymp[[1]])
+
+p3 <- ggplot(data = data.table(a),
+             aes(x = `FSC-A`,
+                 y = `SSC-A`)) +
+  geom_point(shape = ".",
+             color = "grey") +
+  geom_point(data = data.table(dt_exp_lymp[[1]]),
+             shape = ".",
+             color = "red") +
+  ggtitle(names(dt_exp)[1]) +
+  theme_bw()
+print (p3)
+```
+
+# TEMP FIX: KEEP ONLY THE SAMPLES WITH LYPHS IDENTIFIED
+
+```{r}
+# samples_keep <- lapply(row_keep,
+#                        FUN = function(a) {
+#                          !is.na(a[1])
+#                        })
+# samples_keep <- do.call("c",
+#                         samples_keep)
+# samples_keep
+# 
+# sum(samples_keep)
+# # Only 34 samples left!
+# 
+# dt_exp <- dt_exp[samples_keep]
+# head(dt_exp$`0029.FCS`)
+
+# row_keep <- row_keep[samples_keep]
+```
+
 ## Separate lymphosites
 
 ```{r,fig.width=5,fig.height=5}
@@ -786,85 +901,6 @@ for(i in 1:length(dt_exp)) {
     row_keep[[i]] <- out
   }
 }
-```
-
-# TROUBLESHOOTING
-
-NOTE1: Davit commented out a part of ... code because of the following error:  
-** Error in if (nrow(idx_f) > 3 & (idx_f[i, ][1] >= (idx_f[(i + 3), ][1] -  :**  
-**  argument is of length zero**   
-  
-NOTE2: we are probably using the wrong cluster (landmark) to identify lyphosites.  
-  
-```{r, fig.width=6,fig.height=6}
-# a=dt_exp[[2]]
-# 
-# row_keep <- list()
-# class(a)
-# dim(a)
-# 
-# range(a[, 2])
-# range(a[, 1])
-# 
-# p1 <- f.plot(x = a[, 2],
-#              y = a[, 1],
-#              nr = 100,
-#              nc = 100,
-#              scale = "l")
-# image(p1)
-# 
-# range(log(a[, 2] - min(a[, 2]) + 1))
-# range(log(a[, 1]))
-# 
-# p2 <- f.plot(x = log(a[, 2] - min(a[, 2]) + 1),
-#              y = log(a[, 1]),
-#              nr = 100,
-#              nc = 100,
-#              scale = "l")
-# image(p2)
-# # image(p2,
-# #       ylim = c(10, 12.5))
-# 
-# row_keep[[1]] <- lympho_finder_convex(fsc_a = a[, 1],
-#                             ssc_a = a[, 2])
-# 
-# dt_exp_lymp <- list()
-# dt_exp_lymp[[1]] <- a[row_keep[[1]] == TRUE, ]
-# 
-# class(dt_exp_lymp[[1]])
-# dim(dt_exp_lymp[[1]])
-# 
-# p1 <- ggplot(data = data.table(a),
-#              aes(x = `FSC-A`,
-#                  y = `SSC-A`)) +
-#   geom_point(shape = ".",
-#              color = "grey") +
-#   geom_point(data = data.table(dt_exp_lymp[[1]]),
-#              shape = ".",
-#              color = "red") +
-#   ggtitle(names(dt_exp)[1]) +
-#   theme_bw()
-# print (p1)
-```
-
-# TEMP FIX: KEEP ONLY THE SAMPLES WITH LYPHS IDENTIFIED
-
-```{r}
-# samples_keep <- lapply(row_keep,
-#                        FUN = function(a) {
-#                          !is.na(a[1])
-#                        })
-# samples_keep <- do.call("c",
-#                         samples_keep)
-# samples_keep
-# 
-# sum(samples_keep)
-# # Only 34 samples left!
-# 
-# dt_exp <- dt_exp[samples_keep]
-# head(dt_exp$`0029.FCS`)
-
-# row_keep <- row_keep[samples_keep]
 ```
 
 ## Delete non-lymphosites from expression matrix and update the expression matrix
@@ -1056,7 +1092,7 @@ plot(Weight ~ Scale,
 
 ```{r}
 lm(Weight ~ Scale,
-     data = tmp[Weight > 4, ])
+   data = tmp[Weight > 4, ])
 
 m2 <- prcomp(dt_dn[, 4:11])
 summary(m2)
@@ -1161,8 +1197,8 @@ hist(dn$`Data Nuggets`$p1, 100)
 
 # z-Test p-velues
 dn$`Data Nuggets`$z_score <- as.numeric((dn$`Data Nuggets`$p1 - p0)/
-                           sqrt(p0*(1 - p0)/
-                                  sum(dn$`Data Nuggets`$Weight)))
+                                          sqrt(p0*(1 - p0)/
+                                                 sum(dn$`Data Nuggets`$Weight)))
 hist(dn$`Data Nuggets`$z_score)
 
 dn$`Data Nuggets`$p_val <- pnorm(dn$`Data Nuggets`$z_score)
