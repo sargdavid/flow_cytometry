@@ -1,4 +1,4 @@
-FCS file,Condition,dose,Individual
+File,Exposure,Treatment,ID
 0001.FCS,UE,unstim,21
 0002.FCS,UE,PAM,21
 0003.FCS,UE,LPS,21
