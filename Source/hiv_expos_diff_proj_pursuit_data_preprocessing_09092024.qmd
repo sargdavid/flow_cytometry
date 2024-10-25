@@ -11,7 +11,7 @@ toc-location: right
 Experiment:  
 Author: Davit Sargsyan   
 Created: 9/9/2024  
-Last updated: 9/9/2024 (DS)  
+Last updated: 9/11/2024 (DS)  
 
 # Setup
 
@@ -133,10 +133,7 @@ lympho_finder_convex<- function(fsc_a,
                                 t22 = 0.71,
                                 t13 = 12,
                                 t23 = 0.83,
-                                t14 = 80,
-                                t24 = 0.6,
-                                t15 = 80,
-                                t25 = 0.75) { 
+                                landmark_num = 3) { 
   x0 <- sqrt((-min(min(ssc_a),
                    min(fsc_a))) + 3 + ssc_a)
   y0 <- sqrt((-min(min(ssc_a),
@@ -262,52 +259,84 @@ lympho_finder_convex<- function(fsc_a,
       idx_f= idx_f[-i,]
     }
   }
-  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
-  idx_f = idx_f[sort(x[idx_f],index.return = TRUE,decreasing = T)$ix[1:3],]
-  idx_f = idx_f[order(idx_f[,1],decreasing=FALSE),]
+  idx_f = idx_f[order(idx_f[,1],
+                      decreasing = FALSE),]
+  idx_f = idx_f[sort(x[idx_f],index.return = TRUE,
+                     decreasing = TRUE)$ix[1:3],]
+  idx_f = idx_f[order(idx_f[,1],
+                      decreasing = FALSE),]
+  # idx_f = idx_f[sort(x[idx_f],
+  #                    index.return = TRUE,
+  #                    decreasing = TRUE)$ix,]
   
-  dat1 <- find_area(x,
-                    idx_f[1,1],
-                    idx_f[1,2],
-                    t1 = t11,
-                    t2 = t21)
-  dat2 <- find_area(x,
-                    idx_f[2,1],
-                    idx_f[2,2],
-                    t1 = t12,
-                    t2 = t22)
-  dat3 <- find_area(x,
-                    idx_f[3,1],
-                    idx_f[3,2],
-                    t1 = t13,
-                    t2 = t23)
-  dat12 <- rbind(cbind(dat1,1),
-                 cbind(dat2,0),
-                 cbind(dat3,0))
-  dat12 <- data.frame(dat12)
-  qda2 <- qda(X3~.,
-              data=dat12)
-  dat_conv <- find_area(x,
-                        idx_f[1,1],
-                        idx_f[1,2],
-                        t1 = t14,
-                        t2 = t24)
-  datt <- cbind(f.density$x[dat_conv[,2]],
-                f.density$y[dat_conv[,1]])
-  dat <- find_area(x,idx_f[1,1],
-                   idx_f[1,2],
-                   t1 = t15,
-                   t2 = t25)
+  dat1 = find_area(x,idx_f[1,1],idx_f[1,2],t1 = t11, t2 = t21)
+  dat2 = find_area(x,idx_f[2,1],idx_f[2,2],t1 = t12, t2 = t22)
+  dat3 = find_area(x,idx_f[3,1],idx_f[3,2],t1 = t13, t2 = t23)
+  dat12<- rbind(cbind(dat1,0),cbind(dat2,1),cbind(dat3,0))
+  dat12=data.frame(dat12)
+  qda2<- qda(X3~.,data=dat12)
+  dat_conv<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.60)
+  datt<- cbind(f.density$x[dat_conv[,2]],f.density$y[dat_conv[,1]])
+  dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.75)
   for (i in nrow(dat):1){
-    if (dat[i,][1] > max_x | 
-        dat[i,][2] > max_y){
+    if (dat[i,][1]>90 | dat[i,][2]>90){
       dat= dat[-i,]
     }
   }
-  dat <- as.data.frame(dat)
-  names(dat) <- names(dat12)[1:2]
-  pop123 <- predict(qda2,
-                    newdata = dat)$class
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  
+  # # Landmark 1
+  # dat1 <- find_area(x,
+  #                   idx_f[1,1],
+  #                   idx_f[1,2],
+  #                   t1 = t11,
+  #                   t2 = t21)
+  # 
+  # # Landmark 2
+  # dat2 <- find_area(x,
+  #                   idx_f[2,1],
+  #                   idx_f[2,2],
+  #                   t1 = t12,
+  #                   t2 = t22)
+  # 
+  # # Landmark 3
+  # dat3 <- find_area(x,
+  #                   idx_f[3,1],
+  #                   idx_f[3,2],
+  #                   t1 = t13,
+  #                   t2 = t23)
+  # 
+  # dat12 <- rbind(cbind(dat1,1),
+  #                cbind(dat2,0),
+  #                cbind(dat3,0))
+  # dat12 <- data.frame(dat12)
+  # qda2 <- qda(X3~.,
+  #             data=dat12)
+  # dat_conv <- find_area(x,
+  #                       idx_f[landmark_num,1],
+  #                       idx_f[landmark_num,2],
+  #                       t1 = t14,
+  #                       t2 = t24)
+  # datt <- cbind(f.density$x[dat_conv[,2]],
+  #               f.density$y[dat_conv[,1]])
+  # dat <- find_area(x,idx_f[3,1],
+  #                  idx_f[landmark_num,2],
+  #                  t1 = t15,
+  #                  t2 = t25)
+  # for (i in nrow(dat):1){
+  #   if (dat[i,][1] > max_x | 
+  #       dat[i,][2] > max_y){
+  #     dat= dat[-i,]
+  #   }
+  # }
+  # dat <- as.data.frame(dat)
+  # names(dat) <- names(dat12)[1:2]
+  # pop123 <- predict(qda2,
+  #                   newdata = dat)$class
   v <- dat[pop123 == 1,]
   m <- as.matrix(dist(v))
   mm <- t(apply(m,2,function(x) c(sum(x ==1),sum(x==sqrt(2)))))
@@ -717,6 +746,7 @@ dt1 <- flowCore::read.flowSet(files = dt_meta$File,
 ```{r}
 # dt1$`0001.FCS`@phenoData
 dt1@frames$`0120.FCS`
+
 t1 <- dt1@frames$`0120.FCS`@exprs
 head(t1)
 ```
@@ -728,6 +758,16 @@ dt2 <- lapply(X = dt1@frames,
                 return(a)
               })
 ```
+
+## Total number of cells
+```{r}
+n_cell <- lapply(X = dt1@frames,
+              FUN = function(a) {
+                return(nrow(a))
+              })
+sum(do.call("c", n_cell))
+```
+
 
 # Preprocessing
 
@@ -794,60 +834,58 @@ NOTE1: Davit commented out a part of ... code because of the following error:
 ** Error in if (nrow(idx_f) > 3 & (idx_f[i, ][1] >= (idx_f[(i + 3), ][1] -  :**  
 **  argument is of length zero**   
 
-NOTE2: we are probably using the wrong cluster (landmark) to identify lyphosites.  
+NOTE2: we are probably using the wrong cluster (landmark) to identify lymphocytes.  
 
 ```{r, fig.width=6,fig.height=6}
-i=2
-
-dt_meta[dt_meta$File == names(dt_exp)[i], ]
-a=dt_exp[[i]]
-
-row_keep <- list()
-class(a)
-dim(a)
-
-range(a[, 2])
-range(a[, 1])
-
-p1 <- f.plot(x = a[, 2],
-             y = a[, 1],
-             nr = 100,
-             nc = 100,
-             scale = "l")
-image(p1)
-
-range(log(a[, 2] - min(a[, 2]) + 1))
-range(log(a[, 1]))
-
-p2 <- f.plot(x = log(a[, 2] - min(a[, 2]) + 1),
-             y = log(a[, 1]),
-             nr = 100,
-             nc = 100,
-             scale = "l")
-image(p2)
-# image(p2,
-#       ylim = c(10, 12.5))
-
-row_keep[[1]] <- lympho_finder_convex(fsc_a = a[, 1],
-                                      ssc_a = a[, 2])
-
-dt_exp_lymp <- list()
-dt_exp_lymp[[1]] <- a[row_keep[[1]] == TRUE, ]
-
-class(dt_exp_lymp[[1]])
-dim(dt_exp_lymp[[1]])
-
-p3 <- ggplot(data = data.table(a),
-             aes(x = `FSC-A`,
-                 y = `SSC-A`)) +
-  geom_point(shape = ".",
-             color = "grey") +
-  geom_point(data = data.table(dt_exp_lymp[[1]]),
-             shape = ".",
-             color = "red") +
-  ggtitle(names(dt_exp)[1]) +
-  theme_bw()
-print (p3)
+# i=2
+# 
+# dt_meta[dt_meta$File == names(dt_exp)[i], ]
+# a=dt_exp[[i]]
+# 
+# row_keep <- list()
+# class(a)
+# dim(a)
+# 
+# range(a[, 2])
+# range(a[, 1])
+# 
+# p1 <- f.plot(x = a[, 2],
+#              y = a[, 1],
+#              nr = 100,
+#              nc = 100,
+#              scale = "l")
+# image(p1)
+# 
+# range(log(a[, 2] - min(a[, 2]) + 1))
+# range(log(a[, 1]))
+# 
+# p2 <- f.plot(x = log(a[, 2] - min(a[, 2]) + 1),
+#              y = log(a[, 1]),
+#              nr = 100,
+#              nc = 100,
+#              scale = "l")
+# image(p2)
+# 
+# row_keep[[1]] <- lympho_finder_convex(fsc_a = a[, 1],
+#                                       ssc_a = a[, 2])
+# 
+# dt_exp_lymp <- list()
+# dt_exp_lymp[[1]] <- a[row_keep[[1]] == TRUE, ]
+# 
+# class(dt_exp_lymp[[1]])
+# dim(dt_exp_lymp[[1]])
+# 
+# p3 <- ggplot(data = data.table(a),
+#              aes(x = `FSC-A`,
+#                  y = `SSC-A`)) +
+#   geom_point(shape = ".",
+#              color = "grey") +
+#   geom_point(data = data.table(dt_exp_lymp[[1]]),
+#              shape = ".",
+#              color = "red") +
+#   ggtitle(names(dt_exp)[1]) +
+#   theme_bw()
+# print (p3)
 ```
 
 # TEMP FIX: KEEP ONLY THE SAMPLES WITH LYPHS IDENTIFIED
@@ -872,35 +910,48 @@ print (p3)
 
 ## Separate lymphosites
 
+THIS NEEDS TO BE PARALLALIZED!
+
 ```{r,fig.width=5,fig.height=5}
-# row_keep <- lapply(X = dt_exp,
-#                    FUN = function(a) {
-#                      out <- lympho_finder_convex(fsc_a = a[, 1],
-#                                                  ssc_a = a[, 2])
-#                      print(table(out))
-#                      return(out)
-#                    })
+system.time({
+  row_keep <- lapply(X = dt_exp,
+                     FUN = function(a) {
+                       out <- lympho_finder_convex(fsc_a = a[, 1],
+                                                   ssc_a = a[, 2])
+                       out <- try({
+                         lympho_finder_convex(fsc_a = a[, 1],
+                                              ssc_a = a[, 2])
+                       })
+                       
+                       if(class(out)[1] == "try-error") {
+                         return(NA)
+                       } else {
+                         print(table(out))
+                         return(out)
+                       }
+                     })
+})
 
-row_keep <- list()
-
-for(i in 1:length(dt_exp)) {
-  
-  print(names(dt_exp)[i])
-  a <- dt_exp[[i]]
-  
-  out <- try({
-    lympho_finder_convex(fsc_a = a[, 1],
-                         ssc_a = a[, 2])
-  })
-  
-  if(class(out)[1] == "try-error") {
-    print("ERROR!")
-    row_keep[[i]] <- NA
-  } else {
-    print(table(out))
-    row_keep[[i]] <- out
-  }
-}
+# row_keep <- list()
+# 
+# for(i in 1:length(dt_exp)) {
+#   
+#   print(names(dt_exp)[i])
+#   a <- dt_exp[[i]]
+#   
+#   out <- try({
+#     lympho_finder_convex(fsc_a = a[, 1],
+#                          ssc_a = a[, 2])
+#   })
+#   
+#   if(class(out)[1] == "try-error") {
+#     print("ERROR!")
+#     row_keep[[i]] <- NA
+#   } else {
+#     print(table(out))
+#     row_keep[[i]] <- out
+#   }
+# }
 ```
 
 ## Delete non-lymphosites from expression matrix and update the expression matrix
@@ -909,7 +960,8 @@ for(i in 1:length(dt_exp)) {
 dt_exp_lymp <- list()
 
 for (i in 1:length(dt_exp)) {
-  dt_exp_lymp[[i]] <- dt_exp[[i]][row_keep[[i]] == TRUE, ]
+  dt_exp_lymp[[i]] <- data.table(File = names(dt_exp)[i],
+                                 dt_exp[[i]][row_keep[[i]] == TRUE, ])
   print(dim(dt_exp_lymp[[i]]))
 }
 
@@ -919,6 +971,8 @@ head(dt_exp_lymp[[1]])
 ```
 
 ## Plot lymphosites
+
+THIS NEEDS TO BE PARALLALIZED!
 
 ```{r, fig.width=6,fig.height=6}
 for (i in 1:length(dt_exp)) {
@@ -930,9 +984,20 @@ for (i in 1:length(dt_exp)) {
     geom_point(data = data.table(dt_exp_lymp[[i]]),
                shape = ".",
                color = "red") +
+    geom_density_2d() +
     ggtitle(names(dt_exp)[i]) +
     theme_bw()
-  print (p1)
+  
+  tiff(filename = paste0("../Tmp/",
+                         names(dt_exp)[i],
+                         ".tiff"),
+       height = 5,
+       width = 5,
+       units = 'in',
+       res = 300,
+       compression = "lzw+p")
+  print(p1)
+  graphics.off()
 }
 ```
 
@@ -948,348 +1013,31 @@ head(dt_dn)
 ## Rename columns with protein names 
 
 ```{r}
-colnames(dt_dn) <- dt_fluors$desc
+colnames(dt_dn)[2:ncol(dt_dn)] <- dt_fluors$desc
 dt_dn <- data.table(dt_dn)
 
 dt_dn$Time <- NULL
+
+dt_dn$File <- factor(dt_dn$File,
+                     levels = unique(dt_dn$File))
 
 head(dt_dn)
 ```
 
 # Save data
 ```{r}
-save(dt_dn,
+save(dt_exp,
      file = "../Tmp/dt_exp.RData")
-save(dt_dn,
+save(dt_exp_lymp,
      file = "../Tmp/dt_exp_lymp.RData")
-save(dt_dn,
+save(row_keep,
      file = "../Tmp/row_keep.RData")
 save(dt_dn,
      file = "../Tmp/dt_dn.RData")
-save(dt_dn,
-     file = "../Tmp/dt_fluors.RData")
-save(dt_dn,
-     file = "../Tmp/dt_meta.RData")
-```
-
-# Clean workspace
-
-```{r}
-rm(list = ls())
-gc()
-```
-
-
-# Reload data
-
-```{r}
-load("../Tmp/dt_exp.RData")
-load("../Tmp/dt_exp_lymp.RData")
-load("../Tmp/row_keep.RData")
-load("../Tmp/dt_dn.RData")
-load("../Tmp/dt_fluors.RData")
-load("../Tmp/dt_meta.RData")
-```
-
-
-## Proteints distributions
-
-```{r}
-for (i in 3:ncol(dt_dn)) {
-  hist(dt_dn[[i]],
-       100,
-       main = colnames(dt_dn)[i])
-}
-```
-
-## Pairwise plot
-
-```{r, fig.width=8,fig.height=8}
-pairs(dt_dn[, 3:ncol(dt_dn)],
-      pch = ".")
-```
-
-# CONTINUE HERE, 9/9/2024!
-
-## Transformation
-
-Either use flowCore double-exponential or Javier's function
-
-Check options!
-
-```{r}
-# dt_lg <- estimateLogicle(x = tmp,
-#                          channels = colnames(tmp)[2:24])
-# dt_lg@transforms$`BL1-A`@output
-# dt_lg@transforms$`BL1-A`@input
-# dt_lg@transforms$`BL1-A`@f
-# tmp <- transform(`_data` = tmp,
-#                  dt_lg)
-```
-
-## Fisher–Yates transformation
-
-```{r}
-for (i in 4:ncol(dt_dn)) {
-  dt_dn[, i] <- DNAMR::cnormalize(dt_dn[, i])
-  hist(dt_dn[, i],
-       100,
-       main = colnames(dt_dn)[i])
-}
-```
-
-## Pairwise plot
-
-```{r, fig.width=8,fig.height=8}
-pairs(dt_dn[, 4:ncol(dt_dn)],
-      pch = ".")
-```
-
-# Data nuggets
-
-NOTE: we need the latest version of the package and use 'create.refined.DN'. Set min number of points in a nugget > 1.
-
-##Create and refine DN
-
-NOTE: Use 'datanugget' package version 1.3.0 or later
-```{r}
-# THIS NEEDS UPDATE!
-# 'refine.DN' function and its wrapper 'create_refine.DN' produce 
-# decimal numbers for 'Weight' but they should be integers (cell counts per nugget)
-# dn <- datanugget::create_refine.DN(x = dt_dn[, c(4:ncol(dt_dn))],
-#                                    DN.num2 = 2000)
-
-dn <- datanugget::create.DN(x = dt_dn[, c(4:ncol(dt_dn))],
-                            DN.num2 = 2000)
-```
-
-## Check Refined DN
-
-```{r}
-print("Number of data nuggets")
-nrow(dn$`Data Nuggets`)
-head(dn$`Data Nuggets`)
-
-print("Length of dn$`Data Nugget Assignments")
-length(dn$`Data Nugget Assignments`)
-```
-
-## Dimentionality of the data manifold
-
-```{r}
-range(dn$`Data Nuggets`$Weight)
-range(dn$`Data Nuggets`$Scalet)
-
-sort(dn$`Data Nuggets`$Scale)[220:250]
-
-tmp <- data.table(Weight = as.vector(log(dn$`Data Nuggets`$Weight)),
-                  Scale = as.vector(log(dn$`Data Nuggets`$Scale + 0.01)))
-
-plot(Weight ~ Scale,
-     data = tmp,
-     pch = ".")
-```
-
-```{r}
-lm(Weight ~ Scale,
-   data = tmp[Weight > 4, ])
-
-m2 <- prcomp(dt_dn[, 4:11])
-summary(m2)
-```
-
-
-
-## Add DN assignments to the cell-level data
-
-```{r}
-dt_dn <- data.frame(file = dt_dn$file,
-                    dn_assign = dn$`Data Nugget Assignments`,
-                    dt_dn[, -1])
-
-head(dt_dn)
-```
-
-## Merge cell-level data and dose
-
-```{r}
-dt_dn <- merge(dt_meta[, c("file",
-                           "dose")],
-               dt_dn,
-               by = "file",
-               all.y = TRUE)
-
-head(dt_dn)
-```
-
-## Boxplots
-
-```{r,fig.width=4,fig.height=6}
-for (i in 6:13) {
-  tmp <- data.table(Dose = dt_dn$dose,
-                    Response = dt_dn[[i]])
-  
-  p1 <- ggplot(tmp,
-               aes(x = Dose,
-                   y = Response)) +
-    # geom_point(position = position_dodge(0.3)) +
-    geom_boxplot() +
-    ggtitle(colnames(dt_dn)[i]) +
-    theme_bw()
-  
-  print(p1)
-}
-```
-
-## Split Single and Repeanted dosing
-
-```{r}
-tableplus<-  function(x,
-                      n = nrow(dn$`Data Nuggets`)) {
-  table(c(x,1:n))-1
-}
-
-tt <- tableplus(x = dn$`Data Nugget Assignments`)
-sum(tt > 1)
-sum(tt == 1)
-
-length(dn$`Data Nugget Assignments`)
-
-addmargins(table(dt_dn$file))
-addmargins(table(dt_dn$dose))
-
-tt_split <- sapply(split(dn$`Data Nugget Assignments`,
-                         dt_dn$dose), 
-                   tableplus)
-head(tt_split)
-dim(tt_split)
-colSums(tt_split)
-
-# Add the counts
-dn$`Data Nuggets` <- cbind(dn$`Data Nuggets`,
-                           tt_split)
-
-# Count differences
-dn$`Data Nuggets`$rep_vs_single_dose_count_diff <- 
-  dn$`Data Nuggets`$Repeat - 
-  dn$`Data Nuggets`$Single
-
-# Ratios
-dn$`Data Nuggets`$rep_dose_rat <- 
-  dn$`Data Nuggets`$Repeat/
-  sum(dn$`Data Nuggets`$Repeat)
-
-dn$`Data Nuggets`$single_dose_rat <- 
-  dn$`Data Nuggets`$Single/
-  sum(dn$`Data Nuggets`$Single)
-
-# Ratio differences
-dn$`Data Nuggets`$rep_vs_single_dose_rat_diff <- 
-  dn$`Data Nuggets`$rep_dose_rat - 
-  dn$`Data Nuggets`$single_dose_rat
-
-# Proportion of Repeat in Total
-p0 <- sum(dn$`Data Nuggets`$Repeat)/sum(dn$`Data Nuggets`$Weight)
-
-# Proportions of Repeat in each nugget
-dn$`Data Nuggets`$p1 <- as.numeric(dn$`Data Nuggets`$Repeat/dn$`Data Nuggets`$Weight)
-hist(dn$`Data Nuggets`$p1, 100)
-
-# z-Test p-velues
-dn$`Data Nuggets`$z_score <- as.numeric((dn$`Data Nuggets`$p1 - p0)/
-                                          sqrt(p0*(1 - p0)/
-                                                 sum(dn$`Data Nuggets`$Weight)))
-hist(dn$`Data Nuggets`$z_score)
-
-dn$`Data Nuggets`$p_val <- pnorm(dn$`Data Nuggets`$z_score)
-hist(dn$`Data Nuggets`$p_val, 100)
-
-dn$`Data Nuggets`$fdr <- p.adjust(dn$`Data Nuggets`$p_val,
-                                  method = "BH")
-hist(dn$`Data Nuggets`$fdr, 100)
-
-head(dn$`Data Nuggets`)
-```
-
-## Spherize the nugget centers
-
-```{r}
-spherized.datanugg <- wsph(data = dn$`Data Nuggets`[, c(2:9)],
-                           weight = dn$`Data Nuggets`$Weight)
-names(spherized.datanugg)
-
-# Spherized data
-nugg_wsph <- spherized.datanugg$data_wsph
-head(nugg_wsph)
-
-# Compare to BEFORE:
-head(dn$`Data Nuggets`[, c(2:9)])
-
-# Means and covariance matrix
-spherized.datanugg$wmean
-spherized.datanugg$wcov
-
-# Scale (WHAT IS THIS FOR?)
-nugg_scale <- sapply(dn$`Data Nuggets`$Scale,
-                     function(x) {
-                       return(max(x,
-                                  0.000001))
-                     })
-```
-
-## Cleaning
-
-```{r}
-gc()
-```
-
-# Projection Pursuit
-
-```{r}
-res <- list()
-
-for (i in 1:2) {
-  res[[i]] <- nugg_pp_optimizer_2d_diff(nugg_wsph = nugg_wsph,
-                                        optmethod = "GTSA",
-                                        nugg_weight = dn$`Data Nuggets`$Weight,
-                                        nugg_scale = nugg_scale,
-                                        ratio_diff = dn$`Data Nuggets`$rep_vs_single_dose_rat_diff,
-                                        cooling = 0.9,
-                                        eps = 1e-2,
-                                        maxiter = 500,
-                                        half = 30,
-                                        n = 500)
-}
-```
-
-# Save all data
-
-ATTN! Move these (latest) files to Data/Processed folder manually!
-```{r}
-# Study design
-save(dt_meta,
-     file = "../Tmp/dt_meta_08052024_1400.RData")
-
-# Fluorochromes
 save(dt_fluors,
-     file = "../Tmp/dt_fluors_08052024_1400.RData")
-
-# Full dataset: lymphosites, all samples
-save(dt_dn,
-     file = "../Tmp/dt_dn_08052024_1400.RData")
-
-# Data nuggets
-save(dn,
-     file = "../Tmp/dn_08052024_1400.RData")
-
-# Spherised data nuggets
-save(nugg_wsph,
-     file = "../Tmp/nugg_wsph_08052024_1400.RData")
-
-# Projection pursuit data
-save(res,
-     file = "../Tmp/res_08052024_1400.RData")
-
+     file = "../Tmp/dt_fluors.RData")
+save(dt_meta,
+     file = "../Tmp/dt_meta.RData")
 ```
 
 # Clean workspace
