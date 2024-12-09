@@ -1,0 +1,1643 @@
+---
+title: "HIV Exposed vs. Unexposed Infant Samples Treated with LPS vs. Control: Data Preprocessing"
+format: html
+editor: source
+self-contained: true
+toc: true
+toc-depth: 6
+toc-location: right
+---
+
+Experiment:  
+Author: Davit Sargsyan   
+Created: 9/9/2024  
+Last updated: 12/9/2024 (DS)  
+
+# Setup
+
+```{r setup}
+# install.packages("../Code/DNAMR_1.2.tar.gz",
+#                  repos = NULL,
+#                  type = "source")
+# 
+# if (!require("BiocManager",
+#              quietly = TRUE))
+#   install.packages("BiocManager")
+# BiocManager::install("flowCore")
+
+require(data.table)
+require(ggplot2)
+require(flowCore)
+require(parallel)
+# require(foreach)
+# require(doParallel)
+
+require(e1071)
+```
+
+# Functions
+
+## f_plot
+
+2D density plots
+```{r}
+f_plot <- function(x,
+                   y,
+                   nr = 20,
+                   nc = 20,
+                   scale = "raw",
+                   alpha = 0.1) {
+  zx <- c(1:nr,
+          rep(1,
+              nc),
+          1 + trunc(nr*(x - min(x))/(max(x) - min(x))))
+  zx[zx > nr] <- nr 
+  zy <- c(rep(1,
+              nr),
+          1:nc,
+          1 + trunc(nc*(y - min(y))/(max(y) - min(y)) ))
+  zy[zy > nc] <- nc
+  z <- table(zx,
+             zy)
+  z[,1] <- z[,1] - 1
+  z[1,] <- z[1,] - 1 
+  if (scale == "l") z <- log(1+z) 
+  if (scale == "d") z <- log(1+log(1+z))
+  z[max(z)*alpha > z] <- 0
+  list(z = t(z), 
+       x = seq(length = nr,
+               from = min(x),
+               to = max(x)),
+       y = seq(length = nc,
+               from = min(y),
+               to = max(y)),
+       zz = cbind(zx,
+                  zy)[-(1:(nr + nc)),],
+       zx = zx,
+       zy = zy)
+}
+```
+
+## search.ind
+
+Finding landmarks
+```{r}
+search.ind <- function(x,
+                       idx,
+                       idy,
+                       threshold = 2) {
+  neighbor_x <- x[max((ceil(idx) - threshold), 1):min((ceil(idx) + threshold),
+                                                      nrow(x)),
+                  max((ceil(idy) - threshold), 1):min((ceil(idy) + threshold),
+                                                      ncol(x))]
+  ind <- which(neighbor_x == max(neighbor_x),
+               arr.ind = TRUE)
+  idx_f <- max((ceil(idx) - threshold),1) + ind[1,1] - 1
+  idy_f <- max((ceil(idy) - threshold),1) + ind[1,2] - 1
+  c(idx_f,
+    idy_f)
+}
+```
+
+## find_area
+
+Identifying clusters around each landmark (i.e. cell subpopulations in FSC vs SSC plot)
+```{r}
+find_area <- function(x,
+                      idx,
+                      idy,
+                      t1 = 35, # distance threshold from a landmark
+                      t2 = 0.85) { # density threshold
+  gr <- cbind(rep(1:nrow(x),
+                  ncol(x)),
+              rep(1:ncol(x),
+                  rep(nrow(x),
+                      ncol(x))))
+  d <- as.matrix(dist(gr))
+  id <- idx+(idy-1)*nrow(x)
+  gr[d[id,] < t1 & x > t2*x[id],2:1]
+}
+```
+
+## lympho_finder_convex UPDATE! (12/9/24)
+
+NOTE: make this generic to find any subpopulation in FSC vs. SSC plot
+```{r}
+lympho_finder_convex <- function(fsc_a, 
+                                 ssc_a,
+                                 n_row = 9,
+                                 n_col = 9,
+                                 max_x = 90,
+                                 max_y = 90,
+                                 qntl = 0.90,
+                                 t11 = 10,
+                                 t21 = 0.74,
+                                 t12 = 12,
+                                 t22 = 0.71,
+                                 t13 = 12,
+                                 t23 = 0.83,
+                                 landmark_num = 3) { 
+  x0 <- sqrt((-min(min(ssc_a),
+                   min(fsc_a))) + 3 + ssc_a)
+  y0 <- sqrt((-min(min(ssc_a),
+                   min(fsc_a))) + 3 + fsc_a)
+  f.density <- f_plot(x0,
+                      y0,
+                      nr = 100,
+                      nc=100,
+                      scale="l")
+  msize <- 100
+  x <- matrix(as.numeric(f.density$z),
+              nrow = 100,
+              ncol = 100)
+  r <- raster(x)
+  extent(r) <- extent(c(0,
+                        msize,
+                        0,
+                        msize) + 0.1)
+  f <- function(X) if(max(X, na.rm = TRUE) > quantile(f.density$z,0.85)){max(X, na.rm = TRUE)} else {-1}
+  ww <- matrix(1, 
+               nrow = n_row,
+               ncol = n_col) # weight matrix for cells in moving window
+  localmax <- focal(r, 
+                    fun = f,
+                    w = ww,
+                    pad = TRUE,
+                    padValue = NA)
+  r2 <- r==localmax
+  maxXY <- xyFromCell(r2,
+                      Which(r2 == 1, 
+                            cells = TRUE))
+  maxXY_rot <- cbind(100 - maxXY[, 2],
+                     maxXY[, 1])
+  idx_f <- t(as.matrix(apply(as.matrix(maxXY_rot),
+                             1,
+                             function(t) {search.ind(x, t[1],t[2])})))
+  idx_f <- idx_f[idx_f[,1] < max_x & 
+                   idx_f[,2] < max_y,]
+  idx_f <- idx_f[x[idx_f] > quantile(x, qntl),]
+  idx_f <- unique(idx_f)
+  
+  # for (i in (nrow(idx_f)-1):1) {
+  #   if (isTRUE(nrow(idx_f) > 3 &
+  #              (idx_f[i,][1] >= (idx_f[(i+1),][1]-8)) &
+  #              (idx_f[i,][2]>=(idx_f[(i+1),][2]-12)) &
+  #              (idx_f[i,][2]<=(idx_f[(i+1),][2]+12)) &
+  #              (x[idx_f][i]<x[idx_f][(i+1)]))){
+  #     idx_f= idx_f[-i,]
+  #   } else if (isTRUE(nrow(idx_f) > 3 &
+  #                     (idx_f[i,][1]>=(idx_f[(i+1),][1]-8)) &
+  #                     (idx_f[i,][2]>=(idx_f[(i+1),][2]-12)) &
+  #                     (idx_f[i,][2]<=(idx_f[(i+1),][2]+12)) &
+  #                     (x[idx_f][i]>=x[idx_f][(i+1)]))) {
+  #     idx_f= idx_f[-(i+1),]
+  #   }
+  # }
+  # for (i in (nrow(idx_f) - 2):1){
+  #   if (isTRUE((nrow(idx_f) > 3 & (idx_f[i,][1]>=(idx_f[(i+2),][1]-8)) &
+  #               (idx_f[i,][2] >= (idx_f[(i+2),][2]-12)) &
+  #               (idx_f[i,][2] <= (idx_f[(i+2),][2]+12)) &
+  #               (x[idx_f][i] < x[idx_f][(i+2)])))) {
+  #     idx_f= idx_f[-i,]
+  #   }
+  #   else if (isTRUE(nrow(idx_f) > 3 &
+  #                   (idx_f[i,][1] >= (idx_f[(i+2),][1]-8)) &
+  #                   (idx_f[i,][2] >= (idx_f[(i+2),][2]-12)) &
+  #                   (idx_f[i,][2] <= (idx_f[(i+2),][2]+12)) &
+  #                   (x[idx_f][i] >= x[idx_f][(i+2)]))) {
+  #     idx_f= idx_f[-(i+2),]
+  #   }
+  # }
+  # 
+  # for (i in (nrow(idx_f) - 3):1) {
+  #   if (nrow(idx_f) > 3 &
+  #       (idx_f[i,][1] >= (idx_f[(i+3),][1]-8)) &
+  #       (idx_f[i,][2] >= (idx_f[(i+3),][2]-12)) &
+  #       (idx_f[i,][2] <= (idx_f[(i+3),][2]+12)) &
+  #       (x[idx_f][i] <=x [idx_f][(i+3)])){
+  #     idx_f= idx_f[-i,]
+  #   }
+  #   else if (nrow(idx_f) > 3 &
+  #            (idx_f[i,][1] >= (idx_f[(i+3),][1]-8)) &
+  #            (idx_f[i,][2] >= (idx_f[(i+3),][2]-12)) &
+  #            (idx_f[i,][2] <= (idx_f[(i+3),][2]+12)) &
+  #            (x[idx_f][i] > x[idx_f][(i+3)])) {
+  #     idx_f= idx_f[-(i+3),]
+  #   }
+  # }
+  # 
+  # idx_f <- idx_f[sort(x[idx_f],
+  #                     index.return = TRUE,
+  #                     decreasing = T)$ix,]
+  # for (i in nrow(idx_f):2) {
+  #   if (nrow(idx_f) > 3 &
+  #       idx_f[i,][1] > idx_f[1,][1] &
+  #       idx_f[i,][1] < (idx_f[1,][1]+15) &
+  #       (idx_f[i,][2] <= (idx_f[1,][2]+20))) {
+  #     idx_f= idx_f[-i,]
+  #   }
+  # }
+  # idx_f <- idx_f[sort(x[idx_f],
+  #                     index.return = TRUE,
+  #                     decreasing = T)$ix[1:3],]
+  # idx_f <- idx_f[order(idx_f[,1],
+  #                      decreasing=FALSE),]
+  # idx_f <- idx_f[sort(x[idx_f],
+  #                     index.return = TRUE,
+  #                     decreasing = T)$ix,]
+  
+  if (nrow(idx_f)>3 & idx_f[1,1]> (idx_f[2,1]-11) & x[idx_f][1]< x[idx_f][2]){
+    idx_f= idx_f[2:nrow(idx_f),]
+  }
+  for (i in nrow(idx_f):2){
+    if (nrow(idx_f)>3 & idx_f[i,][1]< (idx_f[1,1]+11) & x[idx_f][i]<=x[idx_f][1]){
+      idx_f= idx_f[c(1:(i-1),(i+1):nrow(idx_f)),]
+    }
+  }
+  if (nrow(idx_f)>3 & idx_f[nrow(idx_f),1]< (idx_f[(nrow(idx_f)-1),1]+11) & x[idx_f][nrow(idx_f)]< x[idx_f][(nrow(idx_f)-1)]){
+    idx_f= idx_f[1:(nrow(idx_f)-1),]
+  }
+  for (i in (nrow(idx_f)-1):1){
+    if (nrow(idx_f)>3 & idx_f[i,][1]> (idx_f[nrow(idx_f),1]-11) & x[idx_f][i]<=x[idx_f][nrow(idx_f)]){
+      idx_f= idx_f[-i,]
+    }
+  }
+  idx_f = idx_f[order(idx_f[,1],
+                      decreasing = FALSE),]
+  idx_f = idx_f[sort(x[idx_f],index.return = TRUE,
+                     decreasing = TRUE)$ix[1:3],]
+  idx_f = idx_f[order(idx_f[,1],
+                      decreasing = FALSE),]
+  # idx_f = idx_f[sort(x[idx_f],
+  #                    index.return = TRUE,
+  #                    decreasing = TRUE)$ix,]
+  
+  dat1 = find_area(x,idx_f[1,1],idx_f[1,2],t1 = t11, t2 = t21)
+  dat2 = find_area(x,idx_f[2,1],idx_f[2,2],t1 = t12, t2 = t22)
+  dat3 = find_area(x,idx_f[3,1],idx_f[3,2],t1 = t13, t2 = t23)
+  dat12<- rbind(cbind(dat1,0),cbind(dat2,1),cbind(dat3,0))
+  dat12=data.frame(dat12)
+  qda2<- qda(X3~.,data=dat12)
+  dat_conv<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.60)
+  datt<- cbind(f.density$x[dat_conv[,2]],f.density$y[dat_conv[,1]])
+  dat<- find_area(x,idx_f[3,1],idx_f[3,2],t1 = 80, t2 = 0.75)
+  for (i in nrow(dat):1){
+    if (dat[i,][1]>90 | dat[i,][2]>90){
+      dat= dat[-i,]
+    }
+  }
+  dat<-as.data.frame(dat)
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  names(dat)=names(dat12)[1:2]
+  pop123<- predict(qda2,newdata=dat)$class
+  
+  # # Landmark 1
+  # dat1 <- find_area(x,
+  #                   idx_f[1,1],
+  #                   idx_f[1,2],
+  #                   t1 = t11,
+  #                   t2 = t21)
+  # 
+  # # Landmark 2
+  # dat2 <- find_area(x,
+  #                   idx_f[2,1],
+  #                   idx_f[2,2],
+  #                   t1 = t12,
+  #                   t2 = t22)
+  # 
+  # # Landmark 3
+  # dat3 <- find_area(x,
+  #                   idx_f[3,1],
+  #                   idx_f[3,2],
+  #                   t1 = t13,
+  #                   t2 = t23)
+  # 
+  # dat12 <- rbind(cbind(dat1,1),
+  #                cbind(dat2,0),
+  #                cbind(dat3,0))
+  # dat12 <- data.frame(dat12)
+  # qda2 <- qda(X3~.,
+  #             data=dat12)
+  # dat_conv <- find_area(x,
+  #                       idx_f[landmark_num,1],
+  #                       idx_f[landmark_num,2],
+  #                       t1 = t14,
+  #                       t2 = t24)
+  # datt <- cbind(f.density$x[dat_conv[,2]],
+  #               f.density$y[dat_conv[,1]])
+  # dat <- find_area(x,idx_f[3,1],
+  #                  idx_f[landmark_num,2],
+  #                  t1 = t15,
+  #                  t2 = t25)
+  # for (i in nrow(dat):1){
+  #   if (dat[i,][1] > max_x | 
+  #       dat[i,][2] > max_y){
+  #     dat= dat[-i,]
+  #   }
+  # }
+  # dat <- as.data.frame(dat)
+  # names(dat) <- names(dat12)[1:2]
+  # pop123 <- predict(qda2,
+  #                   newdata = dat)$class
+  v <- dat[pop123 == 1,]
+  m <- as.matrix(dist(v))
+  mm <- t(apply(m,2,function(x) c(sum(x ==1),sum(x==sqrt(2)))))
+  j3 <- mm[,1] == 0 |
+    (mm[,1] == 1 &
+       mm[,2] < 2)
+  v1 <- v[!j3,]
+  m <- as.matrix(dist(v1))
+  mm <- t(apply(m,2,function(x) c(sum(x ==1),sum(x==sqrt(2)))))
+  j3 <-  mm[,1]==0 | ( mm[,1]==1 & mm[,2]<2)
+  v2 <- v1[!j3,]
+  chnew <- convhulln(v2)
+  jj <- inhulln(chnew, f.density$zz)
+  xx <- as.matrix(data.table(fsc_a = fsc_a,
+                             ssc_a = ssc_a))
+  chnewnew <- convhulln(xx[jj, ])
+  return(inhulln(chnewnew,
+                 xx))
+}
+```
+
+## wsph 
+
+Spherize the nugget centers
+```{r}
+wsph <- function(data,
+                 weight){
+  n = nrow(data)
+  wmean = 1/sum(weight) *
+    t(as.matrix(weight)) %*%
+    as.matrix(data)
+  data_wcen = as.matrix(data) - 
+    as.matrix(rep(1,n)) %*%
+    wmean
+  wcov = 1/sum(weight) *
+    t(as.matrix(data_wcen)) %*%
+    diag(weight) %*%
+    as.matrix(data_wcen)
+  ev = eigen(wcov)
+  data_wsph = as.matrix(data_wcen) %*%
+    ev$vectors %*%
+    diag(ev$values^(-0.5))
+  return(list(data_wsph = data_wsph,
+              wmean = wmean,
+              wcov = wcov))
+}
+```
+
+## nuggkde2d_dh
+
+Estimate density function of projected data based on the nuggets
+```{r}
+nuggkde2d_dh <- function (nuggproj,
+                          scale,
+                          weight,
+                          n = 100,
+                          lims = NULL) {
+  x = nuggproj[,1]
+  y = nuggproj[,2]
+  nx <- nrow(nuggproj)
+  h = scale
+  w = weight
+  if(is.null(lims)){
+    lims = c(range(x), range(y))
+  }
+  
+  if (length(w) != nx & length(w) != 1)
+    stop("weight vectors must be 1 or length of data")
+  gx <- seq(lims[1], lims[2], length = n) # gridpoints x
+  gy <- seq(lims[3], lims[4], length = n) # gridpoints y
+  h <- if (missing(h)) rep(min(bandwidth.nrd(x)/4,bandwidth.nrd(y)/4),nx) else h
+  if (any(h <= 0))
+    stop("bandwidths must be strictly positive")
+  # h <- 1.06 * h * length(x)^(-1/5)
+  if (missing(w))
+    w <- numeric(nx)+1;
+  #The outer product of the arrays X and Y is the array A with dimension c(dim(X), dim(Y)) where element A[c(arrayindex.x, arrayindex.y)] = FUN(X[arrayindex.x], Y[arrayindex.y], ...).
+  ax <- matrix(rep(h,n), nrow=n, ncol=nx, byrow=TRUE)^(-1)*outer(gx, x, "-") # distance of each point to each grid point in x-direction
+  ay <- matrix(rep(h,n), nrow=n, ncol=nx, byrow=TRUE)^(-1)*outer(gy, y, "-") # distance of each point to each grid point in y-direction
+  z <- (matrix(rep(h,n), nrow=n, ncol=nx, byrow=TRUE)^(-2)*matrix(rep(w,n), nrow=n, ncol=nx, byrow=TRUE)*matrix(dnorm(ax), n, nx)) %*% t(matrix(dnorm(ay), n, nx))/(sum(w)) # z is the density
+  return(list(x = gx, y = gy, z = z))
+}
+```
+
+## nuggkde2d_dh_diff
+
+NOTE: merge this with the previous function, add an argument to switch, and an IF statement. Update the main optimization function accordingly.
+```{r}
+nuggkde2d_dh_diff <- function(nuggproj,
+                              scale,
+                              weight,
+                              n = 100,
+                              lims = NULL){
+  x = nuggproj[,1]
+  y = nuggproj[,2]
+  nx <- nrow(nuggproj)
+  h = scale
+  w = weight
+  if(is.null(lims)){
+    lims = c(range(x), range(y))
+  }
+  
+  if (length(w) != nx & length(w) != 1)
+    stop("weight vectors must be 1 or length of data")
+  gx <- seq(lims[1], lims[2], length = n) # gridpoints x
+  gy <- seq(lims[3], lims[4], length = n) # gridpoints y
+  h <- if (missing(h)) rep(min(bandwidth.nrd(x)/4,bandwidth.nrd(y)/4),nx) else h
+  if (any(h <= 0))
+    stop("bandwidths must be strictly positive")
+  # h <- 1.06 * h * length(x)^(-1/5)
+  if (missing(w))
+    w <- numeric(nx)+1;
+  #The outer product of the arrays X and Y is the array A with dimension c(dim(X), dim(Y)) where element A[c(arrayindex.x, arrayindex.y)] = FUN(X[arrayindex.x], Y[arrayindex.y], ...).
+  ax <- matrix(rep(h,n), nrow=n, ncol=nx, byrow=TRUE)^(-1)*outer(gx, x, "-") # distance of each point to each grid point in x-direction
+  ay <- matrix(rep(h,n), nrow=n, ncol=nx, byrow=TRUE)^(-1)*outer(gy, y, "-") # distance of each point to each grid point in y-direction
+  z <- (matrix(rep(h,n), nrow=n, ncol=nx, byrow=TRUE)^(-2)*matrix(rep(w,n), nrow=n, ncol=nx, byrow=TRUE)*matrix(dnorm(ax), n, nx)) %*% t(matrix(dnorm(ay), n, nx)) # z is the density
+  return(list(x = gx, y = gy, z = z))
+}
+```
+
+## nugg_2d_pp_diff
+
+Calculate density function of the differeces
+```{r}
+nugg_2d_pp_diff <- function(nugg_weight,
+                            nugg_scale,
+                            proj,
+                            ratio_diff,
+                            n = 500) {
+  estw = nuggkde2d_dh(proj,scale= nugg_scale, n,weight = nugg_weight,lims = c(c(-25,25), c(-25,25)))
+  estw_diff = nuggkde2d_dh_diff(proj,scale= nugg_scale, n,weight = ratio_diff,lims = c(c(-25,25), c(-25,25)))
+  cell_size <- (50 / n) * (50 / n)
+  y0w = rep(estw$y,n)
+  x0w = rep(estw$x,rep(n,n))
+  funw = (estw_diff$z)^2*estw$z
+  ## get numerical integral by summation:
+  sum(funw) * cell_size
+}
+```
+
+## nugg_pp_optimizer_2d_diff
+
+Optimize PP index for 2d projection for nuggets
+```{r}
+nugg_pp_optimizer_2d_diff <- function(nugg_wsph,
+                                      optmethod = "GTSA",
+                                      nugg_weight,
+                                      nugg_scale,
+                                      ratio_diff,
+                                      cooling = 0.9,
+                                      eps = 1e-3,
+                                      maxiter = 3000,
+                                      half = 30,
+                                      n = 500) {
+  dimproj = 2
+  data = nugg_wsph
+  # set.seed(7)
+  
+  Base <- function(NumLin, d) {
+    #This function helps to find an orthonormal base using the principal components
+    dataBase <- matrix(rnorm(NumLin * d), ncol = d)
+    
+    return(dataBase)
+  }
+  
+  if (optmethod == "GTSA") { # only for the grand tour simulated annealing optimization method
+    
+    Interpolation <- function(Aa, Az) {
+      # This function performs matrix Aa interpolation in Az
+      
+      # Input:
+      # Aa - Initial projection
+      # Az - Projection target
+      
+      # Return:
+      # A - Matrix of interpolated projection of Aa in Az
+      
+      if (!is_orthonormal(Aa)) Aa <- Orthonormalise(Aa)
+      
+      if (!is_orthonormal(Az)) Az <- Orthonormalise(Az)
+      
+      sv <- svd(t(Aa) %*% Az) # decomposicao de valor singular
+      
+      # Componentes das decomposicao de varlor singular
+      NumCol <- ncol(Aa)
+      lambda <- sv$d[NumCol:1] # do menor para o maior lambda para encontrar os planos mais proximos
+      Va     <- sv$u[, NumCol:1]
+      Vz     <- sv$v[, NumCol:1]
+      
+      # Planos para a projecao
+      Ba <- Aa %*% Va
+      Bz <- Az %*% Vz
+      
+      # Ortonormaliza os planos
+      Ba <- Orthonormalise(Ba)
+      Bz <- Orthonormalise(Bz)
+      Bz <- Orthonormalise_by(Bz, Ba)
+      
+      # Calcula os angulos principais
+      Tau <- suppressWarnings(acos(lambda)) # Gera uma mensagem de aviso que corresponde ao seu argumento
+      Tau.NaN <- is.nan(Tau) | Tau < eps
+      Tau[Tau.NaN] <- 0
+      
+      Bz[, Tau.NaN] <- Ba[, Tau.NaN]
+      
+      k <- 1
+      # for (k in 1:length(Tau))
+      while (k <= length(Tau)) {
+        Bz[,k] <- Ba[,k] * cos(Tau[k]) + Bz[,k] * sin(Tau[k])
+        k <- k + 1
+      }
+      
+      A = Bz %*% Va
+      
+      return(A)
+    }
+    
+    
+    Normalise <- function(Base) {
+      # This function normalizes a Base
+      sweep(Base, 2, sqrt(colSums(Base^2,na.rm = TRUE)), FUN = "/")
+    }
+    
+    
+    Orthonormalise_by <- function(MatX, MatY) {
+      # This function Orthonormalize one matrix for another.
+      # ensures that each MatX column is orthogonal to the column
+      # correspondent in by MatY, using the Gram-Shimidt process
+      
+      # verifica se as matrizes possuem o mesmo tamanho
+      stopifnot(ncol(MatX) == ncol(MatY))
+      stopifnot(nrow(MatX) == nrow(MatY))
+      
+      MatX <- Normalise(MatX)
+      j <- 1
+      while(j <= ncol(MatX)) { # processo de ortognalizacao de Gram-Schmidt
+        MatX[, j] <- MatX[, j] - c(crossprod(MatX[, j], MatY[, j]) / sum(MatY[, j]^2)) * MatY[, j]
+        # MatX[, j] <- MatX[, j] - crossprod(MatX[, j], MatY[, j]) * MatY[, j]
+        j <- j + 1
+      }
+      
+      Normalise(MatX)
+    }
+    
+    
+    Orthonormalise <- function(Base) {
+      # This function finds an orthogonal or orthonormal basis
+      # for Base vectors using the Gram-Shimidt process
+      
+      Base <- Normalise(Base) # to be conservative
+      
+      if (ncol(Base) > 1) {
+        j <- 1
+        while(j <= ncol(Base)) { # processo de ortognalizacao de Gram-Schmidt
+          i <- 1
+          while(i <= (j - 1)) {
+            Base[, j] <- Base[, j] - c(crossprod(Base[, j], Base[, i]) / sum(Base[, i]^2)) * Base[, i]
+            #Base[, j] <- Base[, j] - crossprod(Base[, j], Base[, i]) * Base[, i]
+            i <- i + 1
+          }
+          j <- j + 1
+        }
+      }
+      
+      Normalise(Base)
+    }
+    
+    
+    is_orthonormal <- function(data) {
+      # Esta funcao verifica se data e ortonormal
+      
+      stopifnot(is.matrix(data))
+      
+      Limit <- 0.001
+      
+      j <- 1
+      while(j <= ncol(data)) {
+        if (sqrt(sum(data[, j] ^ 2)) < 1 - Limit) return(FALSE)
+        j <- j + 1
+      }
+      
+      if (ncol(data) > 1) {
+        j <- 2
+        while(j <= ncol(data)) {
+          i <- 1
+          while(i <= (ncol(data) - 1)) {
+            if (abs(sum(data[, j] * data[, i])) > Limit) return(FALSE)
+            i <- i + 1
+          }
+          j <- j + 1
+        }
+      }
+      
+      TRUE
+    }
+  }
+  
+  NumCol <- ncol(data)
+  Dat <- as.matrix(data)
+  Aa <- diag(1, nrow = NumCol, ncol = dimproj) # Matrix of orthogonal initialization
+  Proj <- Dat %*% Aa # initial projection
+  Proj <- as.matrix(Proj)
+  
+  proj.data <- Proj
+  
+  indexMax <- nugg_2d_pp_diff(nugg_weight,nugg_scale,Proj, ratio_diff = ratio_diff, n = n)
+  
+  
+  index <- as.matrix(indexMax)
+  
+  mi <- 1
+  h  <- 0	# number of iterations without increase in index
+  while (mi <= maxiter && cooling > eps) {
+    
+    Ai <- Base(NumCol, dimproj) # initial base
+    
+    Az <- Aa + cooling * Ai # target projection
+    
+    if (optmethod == "GTSA") # only for the grand tour simulated annealing optimization method
+      Az <-  Interpolation(Aa, Az) # Projection matrix through interpolation
+    
+    Proj <- Dat %*% Az
+    
+    indexC <- nugg_2d_pp_diff(nugg_weight,nugg_scale,Proj, ratio_diff = ratio_diff, n = n)
+    
+    print(paste ("Iteration <-", round(mi,1),"   index <-", round(indexMax,10), "   cooling <-", round(cooling,9)))
+    
+    if (indexC > indexMax) {
+      Aa        <- Az
+      indexMax  <- indexC
+      proj.data <- Proj
+      index     <- rbind(index, indexC)
+      
+    } else h <- h + 1
+    
+    mi <- mi + 1
+    
+    if (h == half) {
+      cooling <- cooling * 0.9
+      h <- 0
+    }
+    
+  }
+  
+  rownames(index) <- NULL
+  
+  rownames(proj.data)  <- rownames(data)
+  
+  rownames(Aa) <- colnames(data)
+  
+  colnames(proj.data) <- c(paste("Projection", 1:(ncol(proj.data))))
+  
+  colnames(Aa) <- c(paste("Axis", 1:(ncol(Aa))))
+  
+  Lista <- list(proj.data = proj.data, vector.opt = Aa, index = index)
+  
+  return(Lista)
+  
+}
+```
+
+# Load Raw Data
+
+## FCS files
+
+Repository:
+https://flowrepository.org/id/FR-FCM-ZZZU
+Files:
+http://flowrepository.org/experiments/30/download_ziped_files
+
+```{r}
+dir_name <- "../Data/FlowRepository_FR-FCM-ZZZU_files/FCS/"
+f_name <- list.files(path = dir_name)
+f_name
+```
+
+## Meta data
+
+```{r}
+dt_meta <- fread("../Data/FlowRepository_FR-FCM-ZZZU_files/attachments/HEUvsUE.csv")
+dt_meta
+```
+
+## Keep only the Unstimulated and LPS samples
+
+```{r}
+dt_meta <- dt_meta[Treatment %in% c("unstim",
+                                    "LPS")]
+```
+
+## FCS data
+
+```{r}
+dt1 <- flowCore::read.flowSet(files = dt_meta$File,
+                              # phenoData = dt_meta,
+                              path = dir_name)
+
+# NOT WORKING
+# dt_pheno <- Biobase::AnnotatedDataFrame(data.frame(trt = rep(c("Repeat",
+#                                                                "Single"),
+#                                                              each = 3)))
+# dt_pheno
+```
+
+## CHECKPOINT
+
+```{r}
+# dt1$`0001.FCS`@phenoData
+dt1@frames$`0120.FCS`
+
+t1 <- dt1@frames$`0120.FCS`@exprs
+head(t1)
+```
+
+
+```{r}
+dt2 <- lapply(X = dt1@frames,
+              FUN = function(a) {
+                return(a)
+              })
+```
+
+## Total number of cells
+```{r}
+n_cell <- lapply(X = dt1@frames,
+                 FUN = function(a) {
+                   return(nrow(a))
+                 })
+sum(do.call("c", n_cell))
+```
+
+# Preprocessing
+
+## Compensation
+
+All files: identity!
+```{r}
+dt2$`0029.FCS`@description$SPILL
+dt2$`0120.FCS`@description$SPILL
+```
+
+
+Questions for Maggie:
+
+1.  Should spillover matrix be the same for all files?
+
+```{r}
+dt2 <- lapply(X = dt2,
+              FUN = function(a) {
+                return(compensate(x = a,
+                                  spillover = a@description$SPILL))
+              })
+```
+
+## Clean
+
+```{r}
+rm(list = c("dt1",
+            "t1"))
+gc()
+```
+
+
+## Expressions matrix
+
+```{r}
+dt_exp <- lapply(X = dt2,
+                 FUN = function(a) {
+                   return(a@exprs)
+                 })
+```
+
+## Extract target names
+
+```{r}
+# Same info in all files. Hence, save meta data from any of these files
+dt_fluors <- dt2$`0029.FCS`@parameters@data[c("name",
+                                              "desc")]
+
+dt_fluors$desc[is.na(dt_fluors$desc)] <- 
+  dt_fluors$name[is.na(dt_fluors$desc)]
+
+dt_fluors$desc <- gsub(x = dt_fluors$desc,
+                       pattern = "-",
+                       replacement = "")
+
+
+dt_fluors
+```
+
+# TROUBLESHOOTING
+
+NOTE1: Davit commented out a part of ... code because of the following error:  
+** Error in if (nrow(idx_f) > 3 & (idx_f[i, ][1] >= (idx_f[(i + 3), ][1] -  :**  
+**  argument is of length zero**   
+
+NOTE2: we are probably using the wrong cluster (landmark) to identify lymphocytes.  
+
+```{r, fig.width=6,fig.height=6}
+# i=2
+# 
+# dt_meta[dt_meta$File == names(dt_exp)[i], ]
+# a=dt_exp[[i]]
+# 
+# row_keep <- list()
+# class(a)
+# dim(a)
+# 
+# range(a[, 2])
+# range(a[, 1])
+# 
+# p1 <- f_plot(x = a[, 2],
+#              y = a[, 1],
+#              nr = 100,
+#              nc = 100,
+#              scale = "l")
+# image(p1)
+# 
+# range(log(a[, 2] - min(a[, 2]) + 1))
+# range(log(a[, 1]))
+# 
+# p2 <- f_plot(x = log(a[, 2] - min(a[, 2]) + 1),
+#              y = log(a[, 1]),
+#              nr = 100,
+#              nc = 100,
+#              scale = "l")
+# image(p2)
+# 
+# row_keep[[1]] <- lympho_finder_convex(fsc_a = a[, 1],
+#                                       ssc_a = a[, 2])
+# 
+# dt_exp_lymp <- list()
+# dt_exp_lymp[[1]] <- a[row_keep[[1]] == TRUE, ]
+# 
+# class(dt_exp_lymp[[1]])
+# dim(dt_exp_lymp[[1]])
+# 
+# p3 <- ggplot(data = data.table(a),
+#              aes(x = `FSC-A`,
+#                  y = `SSC-A`)) +
+#   geom_point(shape = ".",
+#              color = "grey") +
+#   geom_point(data = data.table(dt_exp_lymp[[1]]),
+#              shape = ".",
+#              color = "red") +
+#   ggtitle(names(dt_exp)[1]) +
+#   theme_bw()
+# print (p3)
+```
+
+# TEMP FIX: KEEP ONLY THE SAMPLES WITH LYPHS IDENTIFIED
+
+```{r}
+# samples_keep <- lapply(row_keep,
+#                        FUN = function(a) {
+#                          !is.na(a[1])
+#                        })
+# samples_keep <- do.call("c",
+#                         samples_keep)
+# samples_keep
+# 
+# sum(samples_keep)
+# # Only 34 samples left!
+# 
+# dt_exp <- dt_exp[samples_keep]
+# head(dt_exp$`0029.FCS`)
+
+# row_keep <- row_keep[samples_keep]
+```
+
+## Separate lymphosites
+
+THIS NEEDS TO BE PARALLALIZED!
+
+```{r,fig.width=5,fig.height=5}
+# # Simple loop
+# row_keep <- list()
+# 
+# for(i in 1:length(dt_exp)) {
+#   
+#   print(names(dt_exp)[i])
+#   a <- dt_exp[[i]]
+#   
+#   out <- try({
+#     lympho_finder_convex(fsc_a = a[, 1],
+#                          ssc_a = a[, 2])
+#   })
+#   
+#   if(class(out)[1] == "try-error") {
+#     print("ERROR!")
+#     row_keep[[i]] <- NA
+#   } else {
+#     print(table(out))
+#     row_keep[[i]] <- out
+#   }
+# }
+# 
+# # Parallel lapply
+# cl <- makeCluster(getOption("cl.cores",
+#                             detectCores()/2))
+# cl
+#
+# system.time({
+#   row_keep <- parLapply(cl = cl,
+#                         X = dt_exp,
+#                         fun = function(a,
+#                                        lympho_finder_convex,
+#                                        f_plot) {
+#                           out <- lympho_finder_convex(fsc_a = a[, 1],
+#                                                       ssc_a = a[, 2])
+#                           out <- try({
+#                             lympho_finder_convex(fsc_a = a[, 1],
+#                                                  ssc_a = a[, 2])
+#                           })
+#                           
+#                           if(class(out)[1] == "try-error") {
+#                             return(NA)
+#                           } else {
+#                             print(table(out))
+#                             return(out)
+#                           }
+#                         },
+#                         lympho_finder_convex = lympho_finder_convex,
+#                         f_plot = f_plot)
+# })
+# 
+# stopCluster(cl)
+
+# lapply
+system.time({
+  row_keep <- lapply(X = dt_exp,
+                     FUN = function(a) {
+                       out <- lympho_finder_convex(fsc_a = a[, 1],
+                                                   ssc_a = a[, 2])
+                       out <- try({
+                         lympho_finder_convex(fsc_a = a[, 1],
+                                              ssc_a = a[, 2])
+                       })
+                       
+                       if(class(out)[1] == "try-error") {
+                         return(NA)
+                       } else {
+                         print(table(out))
+                         return(out)
+                       }
+                     })
+})
+```
+
+### Output 12/9/2024 2:58PM
+
+```{r}
+# out
+#  FALSE   TRUE 
+# 369958 227336 
+# out
+#  FALSE   TRUE 
+# 340821 169884 
+# out
+#  FALSE   TRUE 
+# 325271 310573 
+# out
+#  FALSE   TRUE 
+# 342083 177154 
+# out
+#  FALSE   TRUE 
+# 164534  56596 
+# out
+#  FALSE   TRUE 
+# 173167 228664 
+# out
+#  FALSE   TRUE 
+# 212560 194951 
+# out
+#  FALSE   TRUE 
+# 230336 203473 
+# out
+#  FALSE   TRUE 
+# 225166 105719 
+# out
+#  FALSE   TRUE 
+# 356782 187484 
+# out
+#  FALSE   TRUE 
+# 405886 121127 
+# out
+#  FALSE   TRUE 
+# 575179 137257 
+# out
+#  FALSE   TRUE 
+# 282525  94746 
+# out
+#  FALSE   TRUE 
+# 311916 267234 
+# out
+# FALSE  TRUE 
+# 14314  7758 
+# out
+#  FALSE   TRUE 
+# 372961 229768 
+# out
+#  FALSE   TRUE 
+# 130426 101612 
+# out
+#  FALSE   TRUE 
+# 413547 166845 
+# out
+#  FALSE   TRUE 
+# 405692 177211 
+# out
+#  FALSE   TRUE 
+# 243390  58578 
+# out
+#  FALSE   TRUE 
+# 372705 154065 
+# out
+#  FALSE   TRUE 
+# 209748  72699 
+# out
+#  FALSE   TRUE 
+# 373264 146108 
+# out
+# FALSE  TRUE 
+# 87167 52234 
+# out
+#  FALSE   TRUE 
+# 107054 109648 
+# out
+#  FALSE   TRUE 
+# 760234  94073 
+# out
+#  FALSE   TRUE 
+# 211603 120173 
+# out
+#  FALSE   TRUE 
+# 299047 185036 
+# out
+#  FALSE   TRUE 
+# 370457 129543 
+# out
+#  FALSE   TRUE 
+# 220412 183562 
+# out
+#  FALSE   TRUE 
+# 740372 146742 
+# out
+#  FALSE   TRUE 
+# 368649 185553 
+# out
+#  FALSE   TRUE 
+# 300481 199519 
+# out
+#  FALSE   TRUE 
+# 405172 214718 
+# out
+#  FALSE   TRUE 
+# 130216  42654 
+# out
+#  FALSE   TRUE 
+# 230358 269642 
+# out
+#  FALSE   TRUE 
+# 212867 169588 
+# out
+#  FALSE   TRUE 
+# 423263 176191 
+# out
+#  FALSE   TRUE 
+# 429381 209439 
+# out
+#  FALSE   TRUE 
+# 491793 293691 
+# out
+#  FALSE   TRUE 
+# 270467 235054 
+# out
+#  FALSE   TRUE 
+# 301941 103734 
+# out
+#  FALSE   TRUE 
+# 426493 151847 
+# out
+#  FALSE   TRUE 
+# 257965 135725 
+# out
+#  FALSE   TRUE 
+# 301212 186030 
+# out
+#  FALSE   TRUE 
+# 288232 142391 
+# out
+#  FALSE   TRUE 
+# 529808  87169 
+# out
+#  FALSE   TRUE 
+# 208503 154809 
+# out
+#  FALSE   TRUE 
+# 108380  25054 
+# out
+#  FALSE   TRUE 
+# 270100 242819 
+# out
+#  FALSE   TRUE 
+# 289847 156355 
+# out
+#  FALSE   TRUE 
+# 317969  80578 
+# out
+#  FALSE   TRUE 
+# 262991 112120 
+# out
+#  FALSE   TRUE 
+# 262991 112120 
+# out
+# FALSE  TRUE 
+# 99292 48398 
+# out
+#  FALSE   TRUE 
+# 480123 278982 
+# out
+#  FALSE   TRUE 
+# 318196 134000 
+# out
+#  FALSE   TRUE 
+# 114407 144415 
+# out
+#  FALSE   TRUE 
+# 323351 169561 
+# out
+#  FALSE   TRUE 
+# 383108 210271 
+# out
+#  FALSE   TRUE 
+# 308143 163871 
+# out
+#  FALSE   TRUE 
+# 456940 215819 
+# out
+#  FALSE   TRUE 
+# 549227 214205 
+# out
+#  FALSE   TRUE 
+# 344317 194684 
+# out
+#  FALSE   TRUE 
+# 147187 198199 
+# out
+#  FALSE   TRUE 
+# 211197 128166 
+# out
+#  FALSE   TRUE 
+# 367817 164731 
+# out
+# FALSE  TRUE 
+# 37680 33330 
+# out
+#  FALSE   TRUE 
+# 374982 150431 
+# out
+#  FALSE   TRUE 
+# 273699 143127 
+# out
+#  FALSE   TRUE 
+# 520600 225449 
+# out
+#  FALSE   TRUE 
+# 532662 240081 
+# out
+#  FALSE   TRUE 
+# 262762 211655 
+# out
+#  FALSE   TRUE 
+# 496467 166761 
+# out
+#  FALSE   TRUE 
+# 231865 103205 
+# out
+#  FALSE   TRUE 
+# 302593 238379 
+# out
+#  FALSE   TRUE 
+# 513971  71308 
+# out
+#  FALSE   TRUE 
+# 108204  49449 
+# out
+#  FALSE   TRUE 
+# 367349 203458 
+# out
+#  FALSE   TRUE 
+# 269205 230795 
+# out
+#  FALSE   TRUE 
+# 705262  95801 
+# out
+#  FALSE   TRUE 
+# 297463 150035 
+# out
+#  FALSE   TRUE 
+# 556588 251685 
+# out
+#  FALSE   TRUE 
+# 329231 177559 
+# out
+#  FALSE   TRUE 
+# 376833 123167 
+# out
+#  FALSE   TRUE 
+# 304901 128206 
+# out
+#  FALSE   TRUE 
+# 213886 162969 
+# out
+#  FALSE   TRUE 
+# 374885 102799 
+# out
+#  FALSE   TRUE 
+# 193807 145961 
+#     user   system  elapsed 
+# 2254.703  218.728 2497.998 
+```
+
+
+## Delete non-lymphosites from expression matrix and update the expression matrix
+
+```{r}
+dt_exp_lymp <- list()
+
+for (i in 1:length(dt_exp)) {
+  dt_exp_lymp[[i]] <- data.table(File = names(dt_exp)[i],
+                                 dt_exp[[i]][row_keep[[i]] == TRUE, ])
+  print(dim(dt_exp_lymp[[i]]))
+}
+
+names(dt_exp_lymp) <- names(dt_exp)
+
+head(dt_exp_lymp[[1]])
+```
+
+## Plot lymphosites
+
+```{r, fig.width=6,fig.height=6}
+pdf(file = "../Tmp/lymphocyte_plots.pdf")
+
+for (i in 1:length(dt_exp)) {
+  p1 <- ggplot(data = data.table(dt_exp[[i]]),
+               aes(x = `FSC-A`,
+                   y = `SSC-A`)) +
+    geom_point(shape = ".",
+               color = "grey") +
+    geom_point(data = data.table(dt_exp_lymp[[i]]),
+               shape = ".",
+               color = "red") +
+    geom_density_2d() +
+    ggtitle(names(dt_exp)[i]) +
+    theme_bw()
+  
+  # tiff(filename = paste0("../Tmp/",
+  #                        names(dt_exp)[i],
+  #                        ".tiff"),
+  #      height = 5,
+  #      width = 5,
+  #      units = 'in',
+  #      res = 300,
+  #      compression = "lzw+p")
+  # print(p1)
+  # graphics.off()
+  
+  print(p1)
+}
+
+dev.off()
+```
+
+## Row-bind all tables
+
+```{r}
+dt_dn <- do.call("rbind",
+                 dt_exp_lymp)
+dim(dt_dn)
+head(dt_dn)
+```
+
+## Rename columns with protein names 
+
+```{r}
+colnames(dt_dn)[2:ncol(dt_dn)] <- dt_fluors$desc
+dt_dn <- data.table(dt_dn)
+
+dt_dn$Time <- NULL
+
+dt_dn$File <- factor(dt_dn$File,
+                     levels = unique(dt_dn$File))
+
+head(dt_dn)
+```
+
+# Save data
+
+```{r}
+save(dt_exp,
+     file = "../Tmp/dt_exp.RData")
+save(dt_exp_lymp,
+     file = "../Tmp/dt_exp_lymp.RData")
+save(row_keep,
+     file = "../Tmp/row_keep.RData")
+save(dt_dn,
+     file = "../Tmp/dt_dn.RData")
+save(dt_fluors,
+     file = "../Tmp/dt_fluors.RData")
+save(dt_meta,
+     file = "../Tmp/dt_meta.RData")
+```
+
+# Clean workspace
+
+```{r}
+rm(list = ls())
+gc()
+```
+
+# Reload data
+
+```{r}
+load("../Tmp/dt_dn.RData")
+load("../Tmp/dt_meta.RData")
+```
+
+## Proteints distributions
+
+```{r}
+names(dt_dn)
+
+pdf(file = "../Tmp/hists.pdf")
+
+for (i in 4:ncol(dt_dn)) {
+  hist(dt_dn[, i, with = FALSE][[1]],
+       100,
+       main = colnames(dt_dn)[i])
+}
+
+dev.off()
+```
+
+# Transatan transformation
+
+## Functions
+
+```{r}
+gap <- function(x) 
+  if (any(x == 0))  if (all(x >= 0) | all(x <= 0)) 
+    min(abs(x)[x != 0])/sd(x[x != 0]) else 0 else 0
+
+skew <- function(x) 
+  if (min(x) >= 0) skewness(x[x > 0]) else if (max(x) <= 0) 
+    skewness(x[x < 0])  else skewness(x)
+
+z = dt_dn[,-(1:3)]
+# ztrans1 = sapply(z,function(x)trans2t(x)$x)
+# ztrans0 = sapply(z,function(x)transgap(x)$x)
+
+# Define the transatan transformation which includes positive and
+# negative values. 
+# transatan = function(x,a=1) atan(a*x/median(x[x>0]))
+transatan <- function(x,
+                      a=1,
+                      m=median(x),
+                      s=sd(x)) {
+  atan(a*(x-m)/s)
+}
+
+ff <- function(th,
+               x = z[[1]],
+               m = median(x),
+               s = sd(x)) {
+  abs(kurtosis(ttt<-transatan(x,
+                              th,
+                              m,
+                              s))- 3) +
+    abs(skewness(ttt))^(4/3)
+} 
+```
+
+## Transform the data
+
+```{r}
+res0 <-  NULL
+
+system.time({
+  for(i in 1:8) {
+    res0[i] = optimize(ff,
+                       c(0.01,
+                         100),
+                       z[[i]])$minimum
+  }
+})
+
+ztrans2 = z
+for(i in 1:8) ztrans2[[i]] <-transatan(z[[i]],res0[i])
+
+dt_dn_t <- cbind(dt_dn[,1:3],
+                 ztrans2)
+
+save(dt_dn_t,
+     file = "../Tmp/dt_dn_t.RData")
+```
+
+## Scaling
+
+```{r}
+dt_dn_t[,4:11] <- app
+  scale(dt_dn_t[,4:11])
+```
+
+
+
+# Data nuggets
+
+## Create and refine DN
+```{r}
+dn <- datanugget::create.DN(x = dt_dn_t[, c(4:ncol(dt_dn_t))],
+                            DN.num2 = 2000, 
+                            seed = 2345679)
+```
+
+## Check Refined DN
+
+```{r}
+print("Number of data nuggets")
+nrow(dn$`Data Nuggets`)
+head(dn$`Data Nuggets`)
+
+print("Length of dn$`Data Nugget Assignments")
+length(dn$`Data Nugget Assignments`)
+
+dn <- refine.DN(x = dt_dn[, c(4:ncol(dt_dn))],
+                DN = dn, seed = 2345673)
+
+dn_no_addition <- dn
+
+# Data nuggets original format
+save(dn_no_addition,
+     file = "../Tmp/datanugget_11222024.RData")
+```
+Mahan Dastgiri
+4:25 PM
+## Add DN assignments to the cell-level data
+```{r}
+dt_dn <- data.frame(cell_id = rownames(dt_dn), file = dt_dn$file,
+                    dn_assign = dn$`Data Nugget Assignments`,
+                    dt_dn[, -1])
+
+# Convert cell IDs to factor
+dt_dn$cell_id <- factor(dt_dn$cell_id,
+                        levels = unique(dt_dn$cell_id))
+
+head(dt_dn)
+```
+Mahan Dastgiri
+4:26 PM
+## Merge cell-level data and dose
+```{r}
+dt_dn <- merge(dt_meta[, c("file",
+                           "dose")],
+               dt_dn,
+               by = "file",
+               all.y = TRUE)
+setorder(dt_dn,
+        cell_id)
+
+names(dt_dn)[7] <- "2B4"
+```
+Mahan Dastgiri
+4:27 PM
+## Boxplots
+```{r,fig.width=4,fig.height=6}
+for (i in 6:13) {
+  tmp <- data.table(Dose = dt_dn$dose,
+                    Response = dt_dn[[i]])
+  
+  p1 <- ggplot(tmp,
+               aes(x = Dose,
+                   y = Response)) +
+    # geom_point(position = position_dodge(0.3)) +
+    geom_boxplot() +
+    ggtitle(colnames(dt_dn)[i]) +
+    theme_bw()
+  
+  print(p1)
+}
+```
+## Split Single and Repeated dosing
+```{r}
+cnt <- dt_dn[, .(N = .N),
+      by = list(dose,
+                dn_assign)]
+
+cnt <- dcast.data.table(cnt,
+                        dn_assign ~ dose,
+                        value.var = "N")
+cnt$Repeat[is.na(cnt$Repeat)] <- 0
+cnt$Single[is.na(cnt$Single)] <- 0
+colnames(cnt)[1] <- "Data Nugget"
+
+dn$`Data Nuggets` <- merge(dn$`Data Nuggets`,
+                           cnt,
+                           by = "Data Nugget")
+
+# Count differences
+dn$`Data Nuggets`
+Mahan Dastgiri
+4:29 PM
+# Count differences
+dn$`Data Nuggets`$rep_vs_single_dose_count_diff <- 
+  dn$`Data Nuggets`$Repeat - 
+  dn$`Data Nuggets`$Single
+
+# Ratios
+dn$`Data Nuggets`$rep_dose_rat <- 
+  dn$`Data Nuggets`$Repeat/
+  sum(dn$`Data Nuggets`$Repeat)
+
+dn$`Data Nuggets`$single_dose_rat <- 
+  dn$`Data Nuggets`$Single/
+  sum(dn$`Data Nuggets`$Single)
+
+# Ratio differences
+dn$`Data Nuggets`$rep_vs_single_dose_rat_diff <- 
+  dn$`Data Nuggets`$rep_dose_rat - 
+  dn$`Data Nuggets`$single_dose_rat
+# Proportion of Repeat in Total
+p0 <- sum(dn$`Data Nuggets`$Repeat)/sum(dn$`Data Nuggets`$Weight)
+
+# Proportions of Repeat in each nugget
+dn$`Data Nuggets`$p1 <- as.numeric(dn$`Data Nuggets`$Repeat/dn$`Data Nuggets`$Weight)
+hist(dn$`Data Nuggets`$p1, 100)
+
+# z-Test p-velues
+dn$`Data Nuggets`$z_score <- as.numeric((dn$`Data Nuggets`$p1 - p0)/
+                           sqrt(p0*(1 - p0)/
+                                  sum(dn$`Data Nuggets`$Weight)))
+hist(dn$`Data Nuggets`$z_score)
+
+
+
+
+
+
+
+
+
+# Data nuggets
+
+##Create and refine DN
+```{r}
+dn <- datanugget::create.DN(x = dt_dn[, c(4:ncol(dt_dn))],
+                            DN.num2 = 2000, seed = 2345679)
+```
+
+
+
+
+
+
+
+
+
+
+
+# Data transformation
+
+```{r}
+transatan <- function(x,
+                      a = 1,
+                      m = median(x),
+                      s = sd(x)) {
+  atan(a*(x-m)/s)
+}
+
+ff <- function(th,
+               x = z[[1]],
+               m = median(x),
+               s = sd(x)) {
+  abs(kurtosis(ttt <- transatan(x,th,m,s))-3) +
+    abs(skewness(ttt))^(4/3)
+}
+
+foo <- function(x) {
+  optimize(ff,
+           c(0.01,
+             100),
+           x)$minimum
+}
+```
+
+# Session
+
+```{r}
+sessionInfo()
+```

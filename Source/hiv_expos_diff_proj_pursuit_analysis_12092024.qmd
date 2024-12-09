@@ -1,0 +1,1951 @@
+---
+title: "HIV Exposed vs. Unexposed Infant Samples Treated with LPS vs. Control: Data Analysis"
+format: html
+editor: source
+self-contained: true
+toc: true
+toc-depth: 6
+toc-location: right
+---
+
+Experiment:  
+Author: Davit Sargsyan   
+Created: 9/9/2024  
+Last updated: 12/9/2024 (DS)  
+
+# Setup
+
+```{r setup}
+# install.packages("../Code/DNAMR_1.2.tar.gz",
+#                  repos = NULL,
+#                  type = "source")
+
+# if (!require("BiocManager",
+#              quietly = TRUE))
+#     install.packages("BiocManager")
+# 
+# BiocManager::install("flowAI")
+
+require(data.table)
+require(ggplot2)
+require(moments) # for Javier's transformation
+require(MASS) # for LDA
+
+# require(raster)
+# require(geometry)
+# require(pracma)
+# require(MASS)
+# require(datanugget) # data compression
+# require(DNAMR) # data normalization
+
+require(ROCR) # ROC curves
+require(WCluster) # weighed PCA
+require(psych) # factor analysis
+
+require(tsne) # t-SNE
+require(umap) # UMAP
+require(e1071) # SVM
+
+
+# require(plotly)
+# require(flowAI) # not used yet
+```
+
+# Custom functions
+
+## f.plot
+
+2D density plots
+```{r}
+f.plot <- function(x,
+                   y,
+                   nr = 20,
+                   nc = 20,
+                   scale = "raw",
+                   alpha = 0.1) {
+  zx <- c(1:nr,
+          rep(1,
+              nc),
+          1 + trunc(nr*(x - min(x))/(max(x) - min(x))))
+  zx[zx > nr] <- nr 
+  zy <- c(rep(1,
+              nr),
+          1:nc,
+          1 + trunc(nc*(y - min(y))/(max(y) - min(y)) ))
+  zy[zy > nc] <- nc
+  z <- table(zx,
+             zy)
+  z[,1] <- z[,1] - 1
+  z[1,] <- z[1,] - 1 
+  if (scale == "l") z <- log(1+z) 
+  if (scale == "d") z <- log(1+log(1+z))
+  z[max(z)*alpha > z] <- 0
+  list(z = t(z), 
+       x = seq(length = nr,
+               from = min(x),
+               to = max(x)),
+       y = seq(length = nc,
+               from = min(y),
+               to = max(y)),
+       zz = cbind(zx,
+                  zy)[-(1:(nr + nc)),],
+       zx = zx,
+       zy = zy)
+}
+```
+
+## plot.nuggetproj_2d
+
+```{r}
+plot.nuggetproj_2d <- function(nuggproj,
+                               weight,
+                               qt = 0.8,
+                               lty = 2,
+                               pch = 16,
+                               cex = 0.5,
+                               xlab = "Projection 1",
+                               ylab = "Projection 2",
+                               main = "Projected Data Nuggets") {
+  weight_trans = weight/sum(weight)
+  weight_trans = weight_trans/quantile(weight_trans,qt)
+  col=sapply(1:nrow(nuggproj), function(t){rgb(0,min(weight_trans[t],1),0)})
+  
+  plot(nuggproj,col=col,lty = lty, pch=pch, cex=cex,xlab = xlab, ylab = ylab,main =main)
+  
+}
+```
+
+## f_fa_proj
+
+Function for factor analysis for nugget projection
+```{r}
+f_fa_proj <- function(nugg,
+                      nugg_weight,
+                      wsph_proj = NULL,
+                      proj,
+                      method = c("varimax",
+                                 "promax")) {
+  
+  method = match.arg(method)
+  n = nrow(nugg)
+  wmean = 1/sum(nugg_weight) *
+    t(as.matrix(nugg_weight)) %*%
+    as.matrix(nugg)
+  nugg_wcen = as.matrix(nugg) - 
+    as.matrix(rep(1,n))%*%wmean
+  
+  if(is.null(wsph_proj)){
+    wcov = 1/sum(nugg_weight) *
+      t(as.matrix(nugg_wcen)) %*%
+      diag(nugg_weight) %*%
+      as.matrix(nugg_wcen)
+    ev = eigen(wcov)
+    wsph_proj = ev$vectors %*%
+      diag(ev$values^(-0.5))
+  }
+  
+  proj_dim = ncol(proj)
+  proj_all = wsph_proj %*% proj
+  
+  if(method == "varimax") {
+    rotat_proj = matrix(varimax(as.matrix(proj_all))$loadings,ncol = proj_dim)
+  }else {
+    rotat_proj = matrix(promax(as.matrix(proj_all))$loadings,ncol = proj_dim)
+  }
+  
+  nuggproj_rotat = as.matrix(nugg_wcen) %*%
+    as.matrix(rotat_proj)
+  loadings = rotat_proj
+  return(list(nuggproj_rotat = nuggproj_rotat,
+              loadings = loadings))
+}
+```
+
+## plot_2dloadings
+
+```{r}
+plot_2dloadings <- function(loadings,
+                            label = NULL,
+                            pch = 16,
+                            main = "Loadings Plot",
+                            xlab,
+                            ylab,
+                            xlim = c(min(loadings[,1])-0.3,
+                                     max(loadings[,1])+0.3),
+                            ylim = c(min(loadings[,2])-0.05,
+                                     max(loadings[,2])+0.05),
+                            cex.axis,cex.lab,
+                            textpoints = loadings,
+                            textcex = 1, 
+                            textpos = 2, 
+                            textcol = NULL,
+                            ...) {
+  if(is.null(label)){label = paste("V",
+                                   1:nrow(loadings),
+                                   sep = "")}
+  plot(loadings,
+       pch = pch,
+       xlim = xlim,
+       ylim = ylim,
+       xlab =xlab,
+       ylab = ylab,
+       cex.axis=cex.axis,
+       cex.lab=cex.lab,
+       main = main,
+       ...)
+  abline(h = 0,
+         v = 0,
+         lty = 4)
+  text(textpoints,
+       labels = label, 
+       cex = textcex,
+       pos = textpos,
+       col = textcol)
+}
+```
+
+## rotate and flip
+Flip Source: https://www.expii.com/t/matrix-reflection-of-a-figure-5057 
+```{r}
+rotate <- function(x,
+                   varimax_rotate) {
+  mx_rt <- sqrt(2)*varimax_rotate
+  out <- t(mx_rt %*% t(as.matrix(x[, 1:2])))
+  colnames(out) <- c("PC1",
+                     "PC2")
+  return(out)
+}
+
+rotate2 <- function(x,
+                    tt) {
+  mx_rt <- sqrt(2)*matrix(c(cos(tt), sin(tt),
+                            -sin(tt), cos(tt)),
+                          nrow = 2)
+  # out <- as.matrix(x[, 1:2]) %*% mx_rt
+  out <- t(mx_rt %*% t(as.matrix(x[, 1:2])))
+  colnames(out) <- c("PC1",
+                     "PC2")
+  return(out)
+}
+
+flip <- function(x,
+                 about_x = TRUE) {
+  if (about_x == TRUE) {
+    mx_rt <- matrix(c(-1, 0,
+                      0, 1),
+                    nrow = 2)
+  } else {
+    mx_rt <- matrix(c(1, 0,
+                      0, -1),
+                    nrow = 2)
+  }
+  
+  out <- t(mx_rt %*% t(as.matrix(x[, 1:2])))
+  colnames(out) <- c("PC1",
+                     "PC2")
+  return(out)
+}
+```
+
+# Data 
+
+## Load Preprocessed Data
+
+```{r}
+# load("../Data/Processed_09112024/dt_exp.RData")
+# load("../Data/Processed_09112024/row_keep.RData")
+# load("../Data/Processed_09112024/dt_exp_lymp.RData")
+load("../Data/Processed_09112024/dt_dn.RData")
+load("../Data/Processed_09112024/dt_fluors.RData")
+load("../Data/Processed_09112024/dt_meta.RData")
+```
+
+## Distributions
+
+```{r}
+# summary(dt_dn)
+```
+
+```{r, echo=FALSE}
+# for (i in 4:ncol(dt_dn)) {
+#   hist(dt_dn[[i]],
+#        100,
+#        main = colnames(dt_dn)[i])
+# }
+```
+
+## Plot 2D
+
+```{r, fig.width=6,fig.height=6}
+# range(dt_dn$IFNa)
+# range(dt_dn$IL6)
+# 
+# range(dt_dn$SSCA)
+# range(dt_dn$FSCA)
+# 
+# # p1 <- f.plot(x = sqrt(dt_dn$IFNa + 103),
+# #              y = sqrt(dt_dn$IL6 + 340),
+# #              scale = "l",
+# #              nr = 100,
+# #              nc = 100)
+# 
+# p1 <- f.plot(x = sqrt(dt_dn$SSCA + 320),
+#              y = sqrt(dt_dn$FSCA),
+#              scale = "l",
+#              nr = 100,
+#              nc = 100)
+# 
+# image(x = p1$x,
+#       y = p1$y,
+#       z = p1$z,
+#       col = topo.colors(100))
+```
+
+
+## Transform data
+
+### Log transformation
+
+```{r}
+# dt1 <- copy(dt_dn)
+# 
+# for (i in 4:ncol(dt_dn)) {
+#   dt1[[i]] <- log(dt_dn[[i]] + 500)
+# }
+```
+
+### Javier's atan transformation
+
+#### Trans functions
+
+```{r}
+transatan <- function(x,
+                      a = 1,
+                      m = median(x),
+                      s = sd(x)) {
+  atan(a*(x-m)/s)
+}
+
+ff <- function(th,
+               x = z[[1]],
+               m = median(x),
+               s = sd(x)) {
+  abs(kurtosis(ttt <- transatan(x,th,m,s))-3) +
+    abs(skewness(ttt))^(4/3)
+}
+
+foo <- function(x) {
+  optimize(ff,
+           c(0.01,
+             100),
+           x)$minimum
+}
+```
+
+#### Optimize the coefficients
+
+```{r}
+# res0 <- NULL
+# for (i in 4:ncol(dt_dn)) {
+#   res0[i] <- foo(dt_dn[[i]])
+# }
+# 
+# save(res0,
+#      file = "../Tmp/res0.RData")
+# res0
+```
+
+#### Transform the data
+
+```{r}
+load("../Data/res0.RData")
+```
+
+
+```{r}
+dt1 <- copy(dt_dn)
+
+for (i in 4:ncol(dt_dn)) {
+  dt1[[i]] <- transatan(dt1[[i]],
+                        res0[i])
+}
+```
+
+
+```{r}
+for (i in 4:ncol(dt_dn)) {
+  hist(dt1[[i]],
+       100,
+       main = colnames(dt1)[i])
+}
+```
+
+```{r,fig.width=5,fig.height=5}
+# p1 <- f.plot(x = sqrt(max(dt2$TNFa) - dt2$TNFa + 1),
+#              y = sqrt(max(dt2$IFNa) - dt2$IFNa  + 1),
+#              scale = "l",
+#              nr = 100,
+#              nc = 100)
+
+p1 <- f.plot(x = dt1$TNFa,
+             y = dt1$IFNa,
+             scale = "l",
+             nr = 100,
+             nc = 100)
+
+image(x = p1$x,
+      y = p1$y,
+      z = p1$z,
+      col = topo.colors(100))
+```
+
+
+## Remove genotypical markers
+
+The 4 genotypical markers are all absent in lymphocytes. Therefore, do not use in the analysis.
+
+```{r}
+dt1 <- dt1[, c("File",
+               "FSCA",
+               "SSCA",
+               "MHCII",
+               "IFNa",
+               "IL6",
+               "IL12",
+               "TNFa")]
+
+gc()
+```
+
+## Merge with meta data
+
+```{r}
+dt1 <- merge(dt_meta,
+             dt1,
+             by = "File")
+
+dt1$Exposure <- factor(dt1$Exposure,
+                       levels = c("UE",
+                                  "HEU"))
+
+dt1$Treatment <- factor(dt1$Treatment,
+                        levels = c("unstim",
+                                   "LPS"))
+
+gc()
+```
+
+### Histograms 
+
+```{r,fig.height=6,fig.width=6}
+for (i in 7:11) {
+  tmp <- dt1[, c(2, 3, i), with = FALSE]
+  names(tmp)[3] <- "Y"
+  
+  p1 <- ggplot(tmp,
+               aes(x = Y)) +
+    facet_grid(Treatment ~ Exposure) +
+    geom_histogram(color = "green",
+                   fill = "white") +
+    ggtitle(names(dt1)[i]) +
+    theme_bw()
+  print(p1)
+}
+
+gc()
+```
+
+
+## ALTERNATIVE: Separate LPS samples only
+
+```{r}
+# dt2 <- droplevels(dt1[Exposure == "HEU", ])
+# 
+# for (i in 7:10) {
+#   boxplot(dt2[[i]] ~ dt2$Treatment,
+#           main = names(dt2)[i])
+# }
+```
+
+## Subtract Unstim
+
+Subtract mean of 'unstim' from each value of 'LPS', per subject per protein.
+
+```{r}
+dt1[, NN := 1:.N, ]
+
+out <- list()
+
+muu <- list()
+
+for (i in 7:11) {
+  tmp <- data.table(ID = dt1$ID,
+                    Treatment = dt1$Treatment,
+                    NN = dt1$NN,
+                    x = dt1[[i]])
+  mm <- tmp[Treatment == "unstim",
+            .(mu_unstim = mean(x),
+              std = sd(x),
+              n = .N),
+            by = ID]
+  muu[[i-6]] <- data.table(Marker = names(dt1)[i],
+                           mm)
+  
+  tmp <- tmp[Treatment == "LPS", ]
+  tmp <- merge(tmp,
+               mm,
+               by = "ID")
+  
+  # OPTIONS:
+  # LPS - Unstim
+  tmp[, LPS_Unstim := tmp$x - tmp$mu_unstim, ]
+  
+  # NOTE: a better way to do this is to subtract quantile by quantile
+  
+  # # LPS/Unstim
+  # tmp[, LPS_Unstim := x / mu_unstim, ]
+  # # LPS as % of Unstim
+  # tmp[, LPS_Unstim := 100*(x - mu_unstim) / mu_unstim, ]
+  
+  tmp <- tmp[, c("NN",
+                 "LPS_Unstim")]
+  
+  hist(tmp$LPS_Unstim,
+       100,
+       main = colnames(dt1)[i])
+  
+  colnames(tmp)[2] <- colnames(dt1)[i]
+  
+  out[[i - 6]] <- tmp
+}
+```
+
+## Means and SD of Unstim
+
+```{r}
+muu <- do.call("rbind", muu)
+muu <- merge(unique(dt_meta[, c("ID",
+                                "Exposure")]),
+             muu,
+             by = "ID",
+             all.y = TRUE)
+muu
+```
+
+```{r}
+ggplot(muu,
+       aes(y = mu_unstim,
+           x = Exposure)) +
+  facet_wrap(~ Marker) +
+  geom_boxplot() +
+  theme_bw()
+
+ggplot(muu,
+       aes(y = mu_unstim,
+           x = Exposure,
+           group = ID)) +
+  facet_wrap(~ Marker) +
+  geom_point(position = position_dodge(0.3))+
+  theme_bw()
+```
+
+
+## Merge deltas
+
+```{r}
+dt2 <- Reduce(f = function(x, y) {
+  merge(x, y, by = "NN")  
+},
+x = out)
+
+dt2 <- merge(dt1[, c("NN",
+                     "File",
+                     "Exposure",
+                     "Treatment",
+                     "ID")],
+             dt2,
+             by = "NN",
+             all.y = TRUE)
+dt2$NN <- NULL
+
+dt2$File <- factor(dt2$File)
+
+dt2$Treatment <- factor("LPS_Untreated")
+
+dt2 <- droplevels(dt2)
+
+summary(dt2)
+
+gc()
+```
+
+## Save Delta data
+
+```{r}
+save(dt2,
+     file = "../Tmp/Processed_09112024/dt2_deltas.RData")
+```
+
+# Reload data
+
+```{r}
+load("../Data/Processed_09112024/dt_dn.RData")
+load("../Data/Processed_09112024/dt2_deltas.RData")
+load("../Data/Processed_09112024/dt_fluors.RData")
+load("../Data/Processed_09112024/dt_meta.RData")
+```
+
+```{r}
+summary(dt2)
+```
+```{r}
+tmp <- unique(dt2[, c("Exposure",
+                      "ID")])
+addmargins(table(tmp$Exposure))
+```
+
+```{r}
+for (i in 5:9) {
+  boxplot(dt2[[i]] ~ dt2$Exposure,
+          main = names(dt2)[i])
+}
+```
+
+# LDA on Deltas
+
+## Model
+
+```{r}
+m0 <- lda(x = as.matrix(dt2[, 5:9]),
+          grouping = dt2$Exposure)
+
+m0
+```
+NOTE: the output of the LDA is as the following:  
+
+1. Prior probabilities of groups: proportion of each group in total.  
+
+2. Group means: the means of the 2 groups in the 8-dimensional space.  
+
+3. Coefficients of linear discriminants: the direction of the ray to which the data is being projected. The ray starts at the origin.  
+
+## Predictions
+
+```{r}
+prd <- predict(m0, 
+               type = "probability")
+
+summary(prd$posterior)
+
+t1 <- table(Observed = dt2$Exposure,
+            Predicted = prd$class)
+addmargins(t1)
+
+100*proportions(t1)
+```
+
+## ROC
+
+```{r,fig.width=4,fig.height=4}
+plot(m0)
+
+pred <- ROCR::prediction(predictions = prd$posterior[, 2],
+                         labels = dt2$Exposure)
+
+perf <- ROCR::performance(prediction.obj = pred,
+                          measure = "tpr",
+                          x.measure = "fpr")
+
+plot(perf)
+```
+
+# PCA
+
+## Data
+
+```{r,fig.width=10,fig.height=10}
+# dt_pca_plot <- dt2[sample(x = 1:nrow(dt2),
+#                              size = nrow(dt2),
+#                              replace = FALSE), ]
+# gc()
+```
+
+## Pair Plots
+
+```{r}
+# pairs(dt_pca_plot[, 
+#                   5:ncol(dt_pca_plot)],
+#       pch = ".",
+#       col = factor(dt_pca_plot$Exposure))
+# 
+# pairs(dt_pca_plot[dt_pca_plot$Exposure == "UE",
+#                   5:ncol(dt_pca_plot)],
+#       pch = ".",
+#       col = "red")
+# 
+# pairs(dt_pca_plot[dt_pca_plot$Exposure == "HEU",
+#                   5:ncol(dt_pca_plot)],
+#       pch = ".",
+#       col = "black")
+```
+
+## PCA
+
+```{r}
+names(dt2[, 5:9])
+m1 <- prcomp(dt2[, 5:9],
+             center = TRUE,
+             scale = TRUE)
+summary(m1)
+```
+
+## Scores and Loadings
+
+```{r}
+# Which PCs to keep?
+choices <- 1:2
+
+# Scores, i.e. points (df.u)
+dt.scr <- data.table(m1$x[, choices])
+
+# Add grouping variable
+dt.scr$Exposure <- dt2$Exposure
+dt.scr$ID <- dt2$ID
+dt.scr
+
+# Loadings, i.e. arrows (df.v)
+dt.rot <- as.data.frame(m1$rotation[, choices])
+dt.rot$feat <- rownames(dt.rot)
+dt.rot <- data.table(dt.rot)
+dt.rot
+```
+
+## Plot loadings
+
+```{r}
+dt.load <- melt.data.table(dt.rot,
+                           id.vars = "feat",
+                           measure.vars = 1:2,
+                           variable.name = "pc",
+                           value.name = "loading")
+dt.load$feat <- factor(dt.load$feat,
+                       levels = unique(dt.load$feat))
+
+# Plot loadings
+p1 <- ggplot(data = dt.load,
+             aes(x = feat,
+                 y = loading)) +
+  facet_wrap(~ pc,
+             nrow = 2) +
+  geom_bar(stat = "identity") +
+  ggtitle("PC Loadings") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+p1
+```
+
+## Axis labels
+
+```{r}
+u.axis.labs <- paste(colnames(dt.rot)[1:2], 
+                     sprintf('(%0.1f%% explained var.)', 
+                             100*m1$sdev[choices]^2/sum(m1$sdev^2)))
+u.axis.labs
+```
+
+## Biplots
+
+```{r}
+table(dt.scr$Exposure)
+table(dt.scr$ID)
+
+# Scale-up arrows
+scl <- 8
+```
+
+```{r, fig.width=8,fig.height=7}
+# Randomize rows to avoid masking
+dt.scr <- dt.scr[sample(x = 1:nrow(dt.scr),
+                        size = nrow(dt.scr),
+                        replace = FALSE), ]
+
+p1 <- ggplot(data = dt.rot,
+             aes(x = PC1,
+                 y = PC2)) +
+  geom_point(data = dt.scr,
+             aes(color = Exposure),
+             shape = ".",
+             size = 2,
+             alpha = 0.3) +
+  geom_segment(data = dt.rot,
+               aes(x = 0,
+                   y = 0,
+                   xend = scl*PC1,
+                   yend = scl*PC2),
+               arrow = arrow(length = unit(1/2, 'picas')),
+               color = "black",
+               linewidth = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = dt.rot,
+            aes(x = 1.1*scl*PC1,
+                y = 1.1*scl*PC2,
+                label = feat),
+            size = 5,
+            hjust = 0.5,
+            inherit.aes = FALSE) +
+  scale_x_continuous(u.axis.labs[1]) +
+  scale_y_continuous(u.axis.labs[2]) +
+  scale_fill_discrete(name = "Group") +
+  ggtitle("PCA") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+p1
+```
+
+## Varimax
+
+```{r}
+vm <- varimax(x = as.matrix(dt.rot[, 1:2]))
+vm$loadings
+vm$rotmat
+```
+
+## Rotate arrows
+
+```{r}
+tmp <- rotate(x = dt.rot[, 1:2],
+              varimax_rotate = vm$rotmat)
+
+tmp <- rotate2(x = tmp,
+               tt = -2.5*pi/12)
+
+tmp <- flip(x = tmp,
+            about_x = TRUE)
+
+dt.rot1 <- data.table(tmp,
+                      feat = dt.rot$feat)
+
+dt.rot1
+```
+
+## Rotate points
+
+```{r}
+tmp <- rotate(x = dt.scr[, 1:2],
+              varimax_rotate = vm$rotmat)
+
+tmp <- rotate2(x = tmp,
+               tt = -2.5*pi/12)
+
+tmp <- flip(x = tmp,
+            about_x = TRUE)
+
+dt.scr1 <- data.table(tmp,
+                      Exposure = dt.scr$Exposure)
+
+head(dt.scr1)
+```
+
+## Rotated biplot
+
+```{r, fig.width=8,fig.height=7}
+# Randomize rows to avoid masking
+dt.scr1 <- dt.scr1[sample(x = 1:nrow(dt.scr1),
+                          size = nrow(dt.scr1),
+                          replace = FALSE), ]
+
+p1 <- ggplot(data = dt.rot1,
+             aes(x = PC1,
+                 y = PC2)) +
+  geom_point(data = dt.scr1,
+             aes(color = Exposure),
+             shape = ".",
+             size = 2,
+             alpha = 0.3) +
+  geom_segment(data = dt.rot1,
+               aes(x = 0,
+                   y = 0,
+                   xend = scl*PC1,
+                   yend = scl*PC2),
+               arrow = arrow(length = unit(1/2, 'picas')),
+               color = "black",
+               linewidth = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = dt.rot1,
+            aes(x = 1.1*scl*PC1,
+                y = 1.1*scl*PC2,
+                label = feat),
+            size = 5,
+            hjust = 0.5,
+            inherit.aes = FALSE) +
+  scale_x_continuous("Dimention 1") +
+  scale_y_continuous("Dimention 2") +
+  scale_fill_discrete(name = "Group") +
+  ggtitle("") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+p1
+```
+
+## Rotated byplot by Exposure
+
+To show that there is a big overlap between -2 and 2 on PC1:
+```{r, fig.width=10,fig.height=5}
+p1 <- ggplot(data = dt.scr1) +
+  facet_grid(~ Exposure) +
+  # geom_vline(xintercept = c(-2, 2),
+  #            linetype = "dashed",
+  #            color = "blue") +
+  geom_point(data = dt.scr1,
+             aes(x = PC1,
+                 y = PC2,
+                 color = Exposure),
+             shape = ".") +
+  geom_segment(data = dt.rot1,
+               aes(x = 0,
+                   y = 0,
+                   xend = scl*PC1,
+                   yend = scl*PC2),
+               arrow = arrow(length = unit(1/2, 'picas')),
+               color = "black",
+               linewidth = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = dt.rot1,
+            aes(x = 1.1*scl*PC1,
+                y = 1.1*scl*PC2,
+                label = feat),
+            size = 5,
+            hjust = 0.5,
+            inherit.aes = FALSE) +
+  scale_x_continuous("Dimention 1") +
+  scale_y_continuous("Dimention 2") +
+  scale_fill_discrete(name = "Group") +
+  ggtitle("") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+p1
+```
+
+## Rotated, by Exposure by ID
+
+```{r, fig.width=10,fig.height=5}
+for ( i in 1:nlevel(dt2$ID)) {
+  
+  p1 <- ggplot(data = dt.scr1) +
+    facet_grid(~ Exposure) +
+    # geom_vline(xintercept = c(-2, 2),
+    #            linetype = "dashed",
+    #            color = "blue") +
+    geom_point(data = dt.scr1,
+               aes(x = PC1,
+                   y = PC2,
+                   color = Exposure),
+               shape = ".") +
+    geom_segment(data = dt.rot1,
+                 aes(x = 0,
+                     y = 0,
+                     xend = scl*PC1,
+                     yend = scl*PC2),
+                 arrow = arrow(length = unit(1/2, 'picas')),
+                 color = "black",
+                 linewidth = 1,
+                 inherit.aes = FALSE) +
+    geom_text(data = dt.rot1,
+              aes(x = 1.1*scl*PC1,
+                  y = 1.1*scl*PC2,
+                  label = feat),
+              size = 5,
+              hjust = 0.5,
+              inherit.aes = FALSE) +
+    scale_x_continuous("Dimention 1") +
+    scale_y_continuous("Dimention 2") +
+    scale_fill_discrete(name = "Group") +
+    ggtitle("") +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5,
+                                    size = 15))
+  p1
+  
+  tiff(filename = paste0(".../Tmp/",
+                         level(dt2$ID)[i],
+                         ".tiff"),
+       height = 5,
+       width = 10,
+       units = 'in',
+       res = 300,
+       compression = "lzw+p")
+  print(p1)
+  graphics.off()
+}
+```
+
+# Data nuggets
+
+```{r}
+dn <- datanugget::create.DN(x = data.frame(dt2[, 5:9]),
+                            DN.num2 = 3000)
+```
+
+# FIX
+
+```{r}
+dn$`Data Nuggets`$Weight.V1 <- NULL
+names(dn$`Data Nuggets`)[7]
+names(dn$`Data Nuggets`)[7] <- "Weight"
+```
+
+## Check Refined DN
+
+```{r}
+print("Number of data nuggets")
+nrow(dn$`Data Nuggets`)
+head(dn$`Data Nuggets`)
+
+print("Length of dn$`Data Nugget Assignments")
+length(dn$`Data Nugget Assignments`)
+```
+
+## Split Single and Repeanted dosing
+
+```{r}
+tableplus <-  function(x,
+                       n = nrow(dn$`Data Nuggets`)) {
+  table(c(x,1:n))-1
+}
+
+tt <- tableplus(x = dn$`Data Nugget Assignments`)
+sum(tt > 1)
+sum(tt == 1)
+
+length(dn$`Data Nugget Assignments`)
+
+addmargins(table(dt2$File))
+addmargins(table(dt2$Exposure))
+
+tt_split <- sapply(split(dn$`Data Nugget Assignments`,
+                         dt2$Exposure), 
+                   tableplus)
+head(tt_split)
+dim(tt_split)
+colSums(tt_split)
+
+# Add the counts
+dn$`Data Nuggets` <- data.table(cbind(dn$`Data Nuggets`,
+                                      tt_split))
+
+# Count differences
+dn$`Data Nuggets`$heu_vs_ue_count_diff <- 
+  dn$`Data Nuggets`$HEU - 
+  dn$`Data Nuggets`$UE
+
+# Ratios
+dn$`Data Nuggets`$heu_rat <- 
+  dn$`Data Nuggets`$HEU/
+  sum(dn$`Data Nuggets`$HEU)
+
+dn$`Data Nuggets`$ue_rat <- 
+  dn$`Data Nuggets`$UE/
+  sum(dn$`Data Nuggets`$UE)
+
+# Ratio differences
+dn$`Data Nuggets`$heu_vs_ue_rat_diff <- 
+  dn$`Data Nuggets`$heu_rat - 
+  dn$`Data Nuggets`$ue_rat
+
+# Proportion of HEU in Total
+p0 <- sum(dn$`Data Nuggets`$HEU)/sum(dn$`Data Nuggets`$Weight)
+
+# Proportions of HEU in each nugget
+dn$`Data Nuggets`$p1 <- as.numeric(dn$`Data Nuggets`$HEU/dn$`Data Nuggets`$Weight)
+hist(dn$`Data Nuggets`$p1, 100)
+
+# z-Test p-velues
+dn$`Data Nuggets`$z_score <- as.numeric((dn$`Data Nuggets`$p1 - p0)/
+                                          sqrt(p0*(1 - p0)/
+                                                 sum(dn$`Data Nuggets`$Weight)))
+hist(dn$`Data Nuggets`$z_score)
+
+dn$`Data Nuggets`$p_val <- pnorm(dn$`Data Nuggets`$z_score)
+hist(dn$`Data Nuggets`$p_val, 100)
+
+dn$`Data Nuggets`$fdr <- p.adjust(dn$`Data Nuggets`$p_val,
+                                  method = "BH")
+hist(dn$`Data Nuggets`$fdr, 100)
+
+head(dn$`Data Nuggets`)
+```
+
+## Save data nuggets
+
+```{r}
+save(dn,
+     file = "../Data/dn.RData")
+
+gc()
+```
+
+## Spherize the nugget centers
+
+```{r}
+hist(dn$`Data Nuggets`$Scale, 100)
+```
+
+
+```{r}
+spherized.datanugg <- wsph(data = dn$`Data Nuggets`[, c(2:6)],
+                           weight = dn$`Data Nuggets`$Weight)
+names(spherized.datanugg)
+
+# Spherized data
+nugg_wsph <- spherized.datanugg$data_wsph
+head(nugg_wsph)
+
+# Compare to BEFORE:
+head(dn$`Data Nuggets`[, c(2:6)])
+
+# Means and covariance matrix
+spherized.datanugg$wmean
+spherized.datanugg$wcov
+
+dn2 <- data.table(cbind(`Data Nugget` = dn$`Data Nuggets`$`Data Nugget`,
+                        nugg_wsph,
+                        dn$`Data Nuggets`[,
+                                          c(6:ncol(dn$`Data Nuggets`)), 
+                                          with = FALSE]))
+
+head(dn2)
+
+# Scale: replace Scale=0 with a small positive number
+dn2$Scale[dn2$Scale == 0] <- 0.001
+
+names(dn2) <- names(dn$`Data Nuggets`)
+dn2
+```
+
+```{r}
+hist(dn2$Scale, 100)
+range(dn2$Scale)
+```
+
+# Weighed PCA on Data Nuggets
+
+## W-PCA
+```{r}
+# m3 <- WCluster::DN.Wpca(datanugget = dn)
+# This will need removal of all erxtra columns in dn$`Data Nuggets` data frame
+# Alternatively, run Wpca:
+
+zf <- function(x) {
+  apply(x,
+        2,
+        function(z) {
+          (z-mean(z))/sd(z)
+        })
+} 
+
+m3 <- WCluster::Wpca(x = zf(dn2[, 2:6]),
+                     wrow = dn2$Weight)
+
+m3$sdev # eigenvalues
+m3$rotation # arrows in PC space
+head(m3$x) # points in PC space
+```
+
+## ASIDE: Determine number of dimensions
+
+```{r}
+# RULE1: the sum squares of the the eigenvalues should be > 70% of the total sum
+# This is the cumulative variability explained by the PCs
+cum_var_explained <- cumsum(m3$sdev^2)/sum(m3$sdev^2)
+cum_var_explained
+
+# RULE2: everything ~ 1 or more is informative
+# Idea: 1 corresponds to 1 variable. So if the value is << 1,
+# that the PC is less important than a singel variable.
+length(m3$sdev)*m3$sdev^2/sum(m3$sdev^2)
+
+# RULE3: 2nd derivative of scree plot (bar diagram of sdev^2)
+# Scree Plot
+barplot(height = m3$sdev^2,
+        col = 7)
+dff <- -diff(m3$sdev^2)
+ddff <- -diff(dff)/dff[-length(dff)]
+ddff
+barplot(ddff)
+
+# All rules indicate Dim = 3 or 4
+```
+
+## Scores and Loadings
+
+```{r}
+# Which PCs to keep?
+choices <- 1:2
+
+# Scores, i.e. points (df.u)
+dt.scr <- data.table(m3$x[, choices])
+colnames(dt.scr)[1:2] <- paste0("PC",
+                                choices)
+# dt.scr$dn <- dn2
+head(dt.scr)
+
+# Loadings, i.e. arrows (df.v)
+dt.rot <- as.data.frame(m3$rotation[, choices])
+dt.rot$feat <- colnames(dt2)[5:9]
+colnames(dt.rot)[1:2] <- paste0("PC",
+                                choices)
+dt.rot <- data.table(dt.rot)
+dt.rot
+```
+
+## Color-code for proportion of Repeat in each nugget
+
+```{r}
+# Proportion of Repeat in Total
+p0 <- sum(dn2$HEU)/sum(dn2$Weight)
+p0
+
+# Categorize nuggets: no change = +/-20% of the global average
+dt.scr$Exp <- "Mixed"
+dt.scr$Exp[dn2$p1 < 0.9*p0] <- "UE"
+dt.scr$Exp[dn2$p1 > 1.1*p0] <- "HEU"
+dt.scr$Exp <- factor(dt.scr$Exp,
+                     levels = c("UE",
+                                "Mixed",
+                                "HEU"))
+addmargins(table(dt.scr$Exp))
+```
+
+## Size of the bubbles
+```{r}
+dt.scr$size <- 100*as.numeric(sqrt(dn2$Weight/
+                                     sum(dn2$Weight)))
+
+
+hist(dt.scr$size, 100)
+
+dt.scr$size <- as.integer(ceiling(dt.scr$size))
+hist(dt.scr$size, 100)
+
+dt.scr$fdr <- dn2$fdr
+```
+
+```{r}
+summary(dt.scr)
+```
+
+## Plot loadings
+
+```{r}
+dt.load <- melt.data.table(dt.rot,
+                           id.vars = "feat",
+                           measure.vars = 1:2,
+                           variable.name = "pc",
+                           value.name = "loading")
+dt.load$feat <- factor(dt.load$feat,
+                       levels = unique(dt.load$feat))
+
+# Plot loadings
+p1 <- ggplot(data = dt.load,
+             aes(x = feat,
+                 y = loading)) +
+  facet_wrap(~ pc,
+             nrow = 2) +
+  geom_bar(stat = "identity") +
+  ggtitle("PC Loadings") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45,
+                                   hjust = 1))
+p1
+```
+
+## Axis labels
+
+```{r}
+u.axis.labs <- paste(colnames(dt.rot)[choices],
+                     sprintf('(%0.1f%% explained var.)',
+                             100*m3$sdev[choices]^2/sum(m3$sdev^2)))
+u.axis.labs
+```
+
+## Biplots
+
+```{r}
+# Scale-up arrows
+scl <- 7
+# rotate180 <- -1 # 1 = original; -1 = 180' rotation
+
+# Randomize rows to avoid masking
+dt.scr.rand <- dt.scr[sample(x = 1:nrow(dt.scr),
+                             size = nrow(dt.scr),
+                             replace = FALSE), ]
+```
+
+```{r, fig.width=8,fig.height=7}
+p1 <- ggplot(data = dt.rot,
+             aes(x = PC1,
+                 y = PC2)) +
+  geom_point(data = dt.scr.rand,
+             aes(size = size,
+                 fill = fdr),
+             shape = 21,
+             alpha = 0.5) +
+  geom_segment(aes(x = 0,
+                   y = 0,
+                   xend = scl*PC1,
+                   yend = scl*PC2),
+               arrow = arrow(length = unit(1/2, 'picas')),
+               color = "black",
+               linewidth = 1) +
+  geom_text(aes(x = 1.1*scl*PC1,
+                y = 1.1*scl*PC2,
+                label = dt.rot$feat),
+            size = 5,
+            hjust = 0.5) +
+  scale_x_continuous(u.axis.labs[1]) +
+  scale_y_continuous(u.axis.labs[2]) +
+  # scale_fill_discrete(name = "Group") +
+  scale_fill_gradient2(low = "red",
+                       mid = "yellow",
+                       high = "blue",
+                       midpoint = 0.5) +
+  ggtitle("Data Nuggets PCA") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+p1
+```
+
+```{r, fig.width=14,fig.height=7}
+p1 <- ggplot(data = dt.rot,
+             aes(x = PC1,
+                 y = PC2)) +
+  facet_wrap(~ Exp) +
+  geom_vline(xintercept = c(-2, 2),
+             linetype = "dashed",
+             color = "blue") +
+  geom_point(data = dt.scr,
+             aes(fill = Exp,
+                 size = size),
+             shape = 21,
+             alpha = 0.5) +
+  geom_segment(data = dt.rot,
+               aes(x = 0,
+                   y = 0,
+                   xend = scl*PC1,
+                   yend = scl*PC2),
+               arrow = arrow(length = unit(1/2, 'picas')),
+               color = "black",
+               size = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = dt.rot,
+            aes(x = 1.1*scl*PC1,
+                y = 1.1*scl*PC2,
+                label = feat),
+            size = 5,
+            hjust = 0.5,
+            inherit.aes = FALSE) +
+  scale_x_continuous(u.axis.labs[1]) +
+  scale_y_continuous(u.axis.labs[2]) +
+  scale_fill_manual(breaks = c("UE",
+                               "Mixed",
+                               "HEU"),
+                    values = c("red",
+                               "yellow",
+                               "blue")) +
+  ggtitle(paste0("RED=%HEU<Overall",
+                 "\nBLUE=%HEU>Overall",
+                 "\nYELLOW=No Difference(+/-20% of Overall)")) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+p1
+```
+
+# Factor Analysis: ADD HERE!
+
+```{r}
+
+```
+
+# t-SNE
+
+[t-distributed stochastic neighbor embedding (t-SNE)](https://en.wikipedia.org/wiki/Nonlinear_dimensionality_reduction#t-distributed_stochastic_neighbor_embedding) is widely used. It is one of a family of stochastic neighbor embedding methods. The algorithm computes the probability that pairs of datapoints in the high-dimensional space are related, and then chooses low-dimensional embeddings which produce a similar distribution.
+
+NOTE: it cannot handle large datasets (at least on my computer). Downsample.
+
+Source: https://plotly.com/r/t-sne-and-umap-projections/
+```{r}
+# set.seed(54981)
+# ndx <- sample(x = 1:nrow(dt_dn),
+#               size = floor(nrow(dt_dn)/100),
+#               replace = FALSE)
+```
+
+```{r}
+# system.time({
+#   res_tsne <- tsne::tsne(X = dt_dn[ndx, 6:ncol(dt_dn)],
+#                          initial_dims = 2)
+# })
+
+# sigma summary: Min. : 0.23748539224938 |1st Qu. : 0.27694147315033 |Median : 0.29992707430138 |Mean : 0.320445654404692 |3rd Qu. : 0.341532615369729 |Max. : 0.55234405649357 |
+# Epoch: Iteration #100 error is: 12.0799580101649
+# Epoch: Iteration #200 error is: 0.471845139446326
+# Epoch: Iteration #300 error is: 0.406619079237476
+# Epoch: Iteration #400 error is: 0.390447921770024
+# Epoch: Iteration #500 error is: 0.38520254838886
+# Epoch: Iteration #600 error is: 0.382500958727801
+# Epoch: Iteration #700 error is: 0.380825906242222
+# Epoch: Iteration #800 error is: 0.379671164213504
+# Epoch: Iteration #900 error is: 0.378814880265566
+# Epoch: Iteration #1000 error is: 0.378152438066854
+#    user  system elapsed 
+#  138.51   11.03  155.99  
+
+system.time({
+  res_tsne <- tsne::tsne(X = dn2[, 2:6],
+                         initial_dims = 2)
+})
+```
+
+```{r}
+# res_tsne <- data.table(dt_dn$dose[ndx],
+#                        res_tsne)
+
+res_tsne <- data.table(dt_dn$dose[ndx],
+                       res_tsne)
+
+colnames(res_tsne) <- c("dose",
+                        "dim1",
+                        "dim2")
+
+head(res_tsne)
+```
+
+```{r,fig.width=7,fig.height=6}
+ggplot(res_tsne[sample(x = 1:nrow(res_tsne),
+                       size = nrow(res_tsne),
+                       replace = FALSE),],
+       aes(x = dim1,
+           y = dim2,
+           fill = dose)) +
+  geom_point(size = 3,
+             shape = 21,
+             alpha = 05) +
+  theme_bw()
+```
+
+# UMAP
+
+[Uniform manifold approximation and projection (UMAP)](https://en.wikipedia.org/wiki/Nonlinear_dimensionality_reduction#Uniform_manifold_approximation_and_projection) is a nonlinear dimensionality reduction technique. Visually, it is similar to t-SNE, but it assumes that the data is uniformly distributed on a locally connected Riemannian manifold and that the Riemannian metric is locally constant or approximately locally constant
+
+Source: https://plotly.com/r/t-sne-and-umap-projections/
+```{r}
+res_umap <- umap::umap(d = dt_dn[ndx, 6:ncol(dt_dn)],
+                       n_components = 2)
+```
+
+```{r}
+head(res_umap$layout)
+head(res_umap$data)
+head(res_umap$knn$indexes)
+head(res_umap$knn$distances)
+res_umap$config
+
+res_umap <- data.table(dt_dn$dose[ndx],
+                       res_umap$layout)
+
+colnames(res_umap) <- c("dose",
+                        "dim1",
+                        "dim2")
+
+head(res_umap)
+```
+
+```{r,fig.width=7,fig.height=6}
+ggplot(res_umap[sample(x = 1:nrow(res_umap),
+                       size = nrow(res_umap),
+                       replace = FALSE),],
+       aes(x = dim1,
+           y = dim2,
+           fill = dose)) +
+  geom_point(size = 3,
+             shape = 21,
+             alpha = 05) +
+  ggtitle("UMAP") +
+  theme_bw()
+```
+
+# Differential Projection Pursuit
+
+## Get projections
+
+"res_op$index" is the PP index as it is being optimized. The last value is the best. The last value of each run can be compared to select the best projection (s). NOTE: each run of 'nugg_pp_optimizer_2d_diff' function finds a different projection (assuming random seed)
+
+```{r}
+p0 <- sum(dn2$HEU)/sum(dn2$Weight)
+# 0.405, or 40.5%
+
+# For reference:
+# p1 <- dn2$HEU/dn2$Weight
+
+res <- list()
+
+dn2$rat <- (dn2$HEU - dn2$UE)/dn2$Weight
+
+for (i in 1:3) {
+  res[[i]] <- nugg_pp_optimizer_2d_diff(nugg_wsph = dn2[, 2:6],
+                                        optmethod = "GTSA",
+                                        nugg_weight = dn2$Weight,
+                                        nugg_scale = dn2$Scale,
+                                        ratio_diff = dn2$p1 - p0,
+                                        cooling = 0.9,
+                                        eps = 1e-3,
+                                        maxiter = 1500,
+                                        half = 30,
+                                        n = 500)
+}
+
+# nugg_pp_optimizer_2d_diff optimizes projection by maximizing the dPP index. The higher the dPP, the more difference there is between the HEU and UE in a given region of 2D space
+
+# Using Grand Tour Simulated Annealing algorithm for optimization.
+```
+
+```{r}
+save(res,
+     file = "../Tmp/pp_res_09262024.RData")
+```
+
+
+```{r}
+head(res[[1]]$proj.data) # multiply data by this matrix and plot
+dim(res[[1]]$proj.data)
+
+# Loadings matrix
+res[[1]]$vector.opt 
+
+# PP index
+length(res[[1]]$index)
+res[[1]]$index
+```
+
+## Plot the projection
+
+```{r, fig.width=6,fig.height=5}
+for (i in 1:length(res)) {
+  tmp <- data.table(dn2[, 1:10],
+                    Exp = dt.scr$Exp,
+                    size = dt.scr$size,
+                    res[[i]]$proj.data)
+  tmp <- tmp[sample(x = 1:nrow(tmp),
+                    size = nrow(tmp),
+                    replace = FALSE),]
+  
+  p1 <- ggplot(data = tmp,
+               aes(x = `Projection 1`,
+                   y = `Projection 2`,
+                   fill = Exp,
+                   size = size)) +
+    geom_point(shape = 21,
+               alpha = 0.5) +
+    scale_fill_manual(breaks = c("UE",
+                                 "Mixed",
+                                 "HEU"),
+                      values = c("red",
+                                 "yellow",
+                                 "blue")) +
+    ggtitle(paste0("Data Nuggets PP. Run ",
+                   i,
+                   "\nRED=%Repeats<Overall",
+                   "\nBLUE=%Repeats>Overall",
+                   "\nYELLOW=No Difference(+/-10% of Overall)")) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5,
+                                    size = 15))
+  print(p1)
+}
+```
+
+```{r, fig.width=12,fig.height=5}
+for (i in 1:length(res)) {
+  scl <- 5
+  
+  tmp <- data.table(dn2[, 1:10],
+                    Exp = dt.scr$Exp,
+                    size = dt.scr$size,
+                    res[[i]]$proj.data)
+  
+  tmp1 <- data.table(res[[i]]$vector.opt,
+                     feat = dt.rot$feat)
+  
+  p1 <- ggplot(data = tmp,
+               aes(x = `Projection 1`,
+                   y = `Projection 2`,
+                   fill = Exp,
+                   size = size)) +
+    facet_wrap(~ Exp) +
+    geom_point(shape = 21,
+               alpha = 0.5) +
+    geom_segment(data = tmp1,
+                 aes(x = 0,
+                     y = 0,
+                     xend = scl*`Axis 1`,
+                     yend = scl*`Axis 2`),
+                 arrow = arrow(length = unit(1/2, 'picas')),
+                 color = "black",
+                 linewidth = 1,
+                 inherit.aes = FALSE) +
+    geom_text(data = tmp1,
+              aes(x = 1.1*scl*`Axis 1`,
+                  y = 1.1*scl*`Axis 2`,
+                  label = feat),
+              size = 5,
+              hjust = 0.5,
+              inherit.aes = FALSE) +
+    scale_fill_manual(breaks = c("UE",
+                                 "Mixed",
+                                 "HEU"),
+                      values = c("red",
+                                 "yellow",
+                                 "blue")) +
+    ggtitle(paste0("Data Nuggets PP Projection ",
+                   i,
+                   "\nRED=%HEU<Overall",
+                   "\nBLUE=%HEU>Overall",
+                   "\nYELLOW=No Difference(+/-10% of Overall)")) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5,
+                                    size = 15),
+          legend.position = "none")
+  print(p1)
+}
+```
+
+# SVM on PP
+
+https://www.rdocumentation.org/packages/e1071/versions/1.7-14/topics/predict.svm
+
+## Data
+
+```{r}
+i = 2
+
+# # FIX THIS
+# dn2 <- dn2[, -c(16, 17)]
+# names(dn2)
+
+table(dt.scr$Exp)
+
+tmp <- data.table(dn2,
+                  Exp = dt.scr$Exp,
+                  size = dt.scr$size,
+                  res[[i]]$proj.data)
+head(tmp)
+
+tmp$Is_UE <- factor(tmp$Exp == "UE") 
+tmp$Is_HEU <- factor(tmp$Exp == "HEU") 
+tmp$Is_Mixed <- factor(tmp$Exp == "Mixed") 
+
+summary(tmp)
+```
+
+## Predict UE nugggets 
+
+```{r}
+m5 <- e1071::svm(Is_UE ~ `Projection 1` + `Projection 2`,
+                 data = tmp)
+summary(m5)
+
+tmp$prd_UE <- predict(m5)
+t1 <- table(Predicted_UE = tmp$prd_UE,
+            Observed = tmp$Exp == "UE")
+addmargins(t1)
+proportions(t1)
+
+# % UE on average
+sum(tmp$UE)/sum(tmp$Weight)
+
+# % UE in UE region
+sum(tmp[prd_UE == TRUE, ]$UE)/
+  sum(tmp[prd_UE == TRUE, ]$Weight)
+```
+
+## Predict HEU nugggets 
+
+```{r}
+m6 <- e1071::svm(Is_HEU ~ `Projection 1` + `Projection 2`,
+                 data = tmp)
+summary(m6)
+tmp$prd_HEU <- predict(m6)
+t2 <- table(Predicted_HEU = tmp$prd_HEU,
+            Observed = tmp$Exp == "HEU")
+addmargins(t2)
+proportions(t2)
+
+# % Repeats on average
+sum(tmp$HEU)/sum(tmp$Weight)
+
+# % Repeats in Repeat region
+sum(tmp[prd_HEU == TRUE, ]$HEU)/
+  sum(tmp[prd_HEU == TRUE, ]$Weight)
+```
+
+## Predict Mixed nugggets 
+
+```{r}
+summary(tmp)
+#require(mgcv)
+tmp <- data.frame(tmp)
+
+tmp$Is_Mixed <- as.numeric(factor(tmp$Is_Mixed))
+require(gam)
+m1 <- gam::gam(Is_Mixed ~ Projection.1 + Projection.2,
+         data = tmp,
+         weights = tmp$Weight)
+summary(m1)
+```
+
+
+```{r}
+addmargins(table(tmp$Is_Mixed))
+
+m7 <- e1071::svm(Is_Mixed ~ `Projection 1` + `Projection 2`,
+                 data = tmp,
+                 probability = TRUE)
+summary(m7)
+hist(m7$coefs, 100)
+sum(m7$coefs == 1)
+length(m7$coefs)
+head(m7$SV)
+?e1071::svm
+
+
+prd_mixed <- predict(m7, 
+                     decision.values = TRUE, 
+                     probability = TRUE)
+unique(prd_mixed)
+sum(prd_mixed == TRUE)
+
+attr(prd_mixed, "decision.values")[1:4,]
+attr(prd_mixed, "probabilities")[1:4,]
+
+attr(prd_mixed, "probabilities")
+
+t3 <- table(Predicted_Mixed = m7$coefs == 1,
+            Observed = tmp$Exp == "Mixed")
+addmargins(t3)
+proportions(t3)
+
+# # % Mixed on average
+# sum(tmp$UE)/sum(tmp$Weight)
+# 
+# # % Repeats in Repeat region
+# sum(tmp[prd_mixed == TRUE, ]$Repeat)/
+#   sum(tmp[prd_mixed == TRUE, ]$Weight)
+```
+
+## Number of nuggets predicted as belonging to each group
+
+```{r}
+addmargins(table(Predicted_UE = tmp$prd_UE,
+                 Predicted_HEU = tmp$prd_HEU))
+
+tmp2 <- tmp[prd_HEU == TRUE, ]
+head(tmp2)
+```
+
+## Plot SVN-predicted 
+
+```{r,fig.width=6,fig.height=5}
+p1 <- ggplot(data = tmp[sample(x = 1:nrow(tmp),
+                               size = nrow(tmp),
+                               replace = FALSE), ],
+             aes(x = `Projection 1`,
+                 y = `Projection 2`,
+                 fill = Is_UE,
+                 size = size)) +
+  geom_point(shape = 21,
+             alpha = 0.5) +
+  scale_fill_manual(breaks = c("TRUE",
+                               "FALSE"),
+                    values = c("red",
+                               "blue")) +
+  ggtitle(paste0("Data Nuggets PP. Run ",
+                 i,
+                 "\nRED=SVN-Predicted UE",
+                 "\nBLUE=SVN-Predicted non-UE")) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+print(p1)
+```
+
+```{r,fig.width=10,fig.height=5}
+p1 <- ggplot(data = tmp,
+             aes(x = `Projection 1`,
+                 y = `Projection 2`,
+                 fill = Is_HEU,
+                 size = size)) +
+  facet_wrap(~ Is_HEU) +
+  geom_point(shape = 21,
+             alpha = 0.5) +
+  scale_fill_manual(breaks = c("TRUE",
+                               "FALSE"),
+                    values = c("red",
+                               "blue")) +
+  ggtitle(paste0("Data Nuggets PP. Run ",
+                 i,
+                 "\nRED=SVN-Predicted HEU",
+                 "\nBLUE=SVN-Predicted non-HEU")) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5,
+                                  size = 15))
+print(p1)
+```
+
+# CONTINUE HERE 8/14/24
+
+## Change prediction threshold from p=0.5
+
+```{r}
+# By default, data is classfied with probability of 0.5 cutoff. Change it.
+a <- e1071::predict.svm(m5, 
+                        decision.values = TRUE,
+                        probability = TRUE)
+head(a)
+
+attr(pred, "decision.values")[1:4,]
+attr(a, "probability")
+```
+
+NOTE: use Javier's package 'wcluster' using Projection 1 and 2 + weights
+```{r, fig.width=5,fig.height=5}
+for (i in 1:length(res)) {
+  proj = res[[i]]$vector.opt
+  index = res[[i]]$index
+  nuggproj = as.matrix(nugg_wsph) %*%
+    as.matrix(proj)
+  
+  plot.nuggetproj_2d(nuggproj = nuggproj,
+                     weight = dn$`Data Nuggets`$Weight,
+                     qt = 0.6)
+}
+```
+
+```{r, fig.width=9,fig.height=5}
+par(mfrow = c(1,2))
+plot.nuggetproj_2d(nuggproj,
+                   weight = dn$`Data Nuggets`$Single,
+                   qt = 0.6)
+plot.nuggetproj_2d(nuggproj, 
+                   weight = dn$`Data Nuggets`$Repeat,
+                   qt = 0.6)
+```
+
+## Factor analysis on projections
+
+```{r}
+dim(dn$`Data Nuggets`)
+names(dn$`Data Nuggets`)
+# Columns 2:9 are the nugget centers
+
+fa_proj <- list()
+
+for (i in 1:length(res)) {
+  proj = res[[i]]$vector.opt
+  
+  fa_proj[[i]] <- f_fa_proj(nugg = dn$`Data Nuggets`[, 2:9],
+                            nugg_weight = dn$`Data Nuggets`$Weight,
+                            proj = res[[i]]$vector.opt,
+                            method = "varimax")
+  
+  head(fa_proj[[i]]$nuggproj_rotat)
+  print(fa_proj[[i]]$loadings)
+}
+```
+
+## Plot FA loadings
+
+```{r}
+# plot_2dloadings(loadings = fa_proj$loadings,
+#                 # label = dt_fluors$desc[dt_fluors$name %in% 
+#                 #                          colnames(dt_dn)[3:ncol(dt_dn)]],
+#                 # textcex = 1,
+#                 # textpos = c(4,1,rep(4,6)),
+#                 # main = "",
+#                 xlab = "Proj 1",
+#                 ylab = "Proj 2",
+#                 # xlim=c(-2.15,2.65),
+#                 # ylim=c(-1.3,1.6),
+#                 cex.lab = 1,
+#                 cex.axis = 1,
+#                 cex=0.8)
+```
+
+```{r}
+dt_loadings <- list()
+
+for (i in 1:length(fa_proj)) {
+  dt_loadings[[i]] <- data.table(colnames(dt_dn)[6:ncol(dt_dn)],
+                                 fa_proj[[i]]$loadings)
+  names(dt_loadings[[i]]) <- c("target",
+                               "Factor1",
+                               "Factor2")
+  
+  dt_loadings[[i]]$target <- do.call("c",
+                                     lapply(X = strsplit(x = dt_loadings[[i]]$target,
+                                                         split = "-"),
+                                            FUN = function(a) {
+                                              return(a[[1]])
+                                            }))
+  print(dt_loadings[[i]])
+}
+```
+
+```{r}
+for (i in 1:length(dt_loadings)) {
+  p1 <- ggplot(dt_loadings[[i]],
+               aes(x = Factor1,
+                   y = Factor2,
+                   label = target,
+                   color = target)) +
+    geom_hline(yintercept = 0,
+               linetype = "dashed",
+               color = "red") +
+    geom_vline(xintercept = 0,
+               linetype = "dashed",
+               color = "red") +
+    geom_text() +
+    ggtitle(paste("Run #", 
+                  i)) +
+    theme_bw()
+  print(p1)
+}
+```
+
+```{r}
+for (i in 1:length(fa_proj)) {
+  raw_cen_rotat <- as.matrix(dn$`Data Nuggets`[, 2:9]) %*%
+    as.matrix(fa_proj[[i]]$loadings)
+  
+  dim(raw_cen_rotat)
+  
+  plot(raw_cen_rotat)
+}
+```
+
+## Interpretation
+
+Get protein profile of each subpopulation of cells identified by the Differential Projection Pursuit method above.
+
+# Session
+
+```{r}
+sessionInfo()
+```
