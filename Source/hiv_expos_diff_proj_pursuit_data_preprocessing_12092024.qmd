@@ -830,6 +830,26 @@ dt_fluors$desc <- gsub(x = dt_fluors$desc,
 dt_fluors
 ```
 
+# Save a small sample for https://gallery.shinyapps.io/assistant/
+
+```{r}
+tmp <- dt_exp$`0029.FCS`
+
+set.seed(15397)
+ndx <- sample(x = 1:nrow(tmp),
+              size = 1000)
+
+tmp <- data.table(tmp[ndx, ])
+colnames(tmp) <- dt_fluors$desc
+
+tmp$Time <- NULL
+
+head(tmp)
+
+save(tmp,
+     file = "../Tmp/tmp.RData")
+```
+
 # TROUBLESHOOTING
 
 NOTE1: Davit commented out a part of ... code because of the following error:  
