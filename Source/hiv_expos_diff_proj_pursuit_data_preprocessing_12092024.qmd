@@ -833,21 +833,23 @@ dt_fluors
 # Save a small sample for https://gallery.shinyapps.io/assistant/
 
 ```{r}
-tmp <- dt_exp$`0029.FCS`
-
-set.seed(15397)
-ndx <- sample(x = 1:nrow(tmp),
-              size = 1000)
-
-tmp <- data.table(tmp[ndx, ])
-colnames(tmp) <- dt_fluors$desc
-
-tmp$Time <- NULL
-
-head(tmp)
-
-save(tmp,
-     file = "../Tmp/tmp.RData")
+for (i in 1:length(dt_exp)) {
+  tmp <- dt_exp[[i]]
+  
+  set.seed(15397 + 7*i)
+  ndx <- sample(x = 1:nrow(tmp),
+                size = 1000)
+  
+  tmp <- data.table(tmp[ndx, ])
+  colnames(tmp) <- dt_fluors$desc
+  
+  tmp$Time <- NULL
+  
+  save(tmp,
+       file = paste0("../Tmp/for_app/",
+                     names(dt_exp)[i],
+                     ".RData"))
+}
 ```
 
 # TROUBLESHOOTING
@@ -1472,7 +1474,7 @@ save(dt_dn_t,
 
 ```{r}
 dt_dn_t[,4:11] <- app
-  scale(dt_dn_t[,4:11])
+scale(dt_dn_t[,4:11])
 ```
 
 
@@ -1529,7 +1531,7 @@ dt_dn <- merge(dt_meta[, c("file",
                by = "file",
                all.y = TRUE)
 setorder(dt_dn,
-        cell_id)
+         cell_id)
 
 names(dt_dn)[7] <- "2B4"
 ```
@@ -1555,8 +1557,8 @@ for (i in 6:13) {
 ## Split Single and Repeated dosing
 ```{r}
 cnt <- dt_dn[, .(N = .N),
-      by = list(dose,
-                dn_assign)]
+             by = list(dose,
+                       dn_assign)]
 
 cnt <- dcast.data.table(cnt,
                         dn_assign ~ dose,
@@ -1600,8 +1602,8 @@ hist(dn$`Data Nuggets`$p1, 100)
 
 # z-Test p-velues
 dn$`Data Nuggets`$z_score <- as.numeric((dn$`Data Nuggets`$p1 - p0)/
-                           sqrt(p0*(1 - p0)/
-                                  sum(dn$`Data Nuggets`$Weight)))
+                                          sqrt(p0*(1 - p0)/
+                                                 sum(dn$`Data Nuggets`$Weight)))
 hist(dn$`Data Nuggets`$z_score)
 
 

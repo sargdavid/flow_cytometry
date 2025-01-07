@@ -5,14 +5,16 @@ library(DT)
 library(ggplot2)
 
 ui <- page_sidebar(
-  title = "RData File Upload",
-  fillable = TRUE,  # Make the page fillable
+  title = "RData Files Explorer",
+  fillable = TRUE,
   
   # Sidebar with all controls
   sidebar = sidebar(
-    fileInput("file", "Upload .RData file",
+    fileInput("files", "Choose RData Files",
+              multiple = TRUE,
               accept = c(".RData", ".rda")),
-    helpText("Please upload an .RData file containing a data.table object"),
+    helpText("Please select .RData files containing data.table objects"),
+    selectInput("selected_file", "Choose RData file:", choices = NULL),
     uiOutput("object_selector"),
     uiOutput("x_var_selector"),
     uiOutput("y_var_selector"),
@@ -47,20 +49,45 @@ ui <- page_sidebar(
 )
 
 server <- function(input, output, session) {
-  
-  # Reactive value to store loaded objects
+  # Reactive values to store data
+  rdata_files <- reactiveVal(NULL)
   loaded_objects <- reactiveVal(NULL)
   selected_dt <- reactiveVal(NULL)
   
-  # Handle file upload
-  observeEvent(input$file, {
-    req(input$file)
+  # Function to transform numeric variable
+  transform_var <- function(x) {
+    if(is.numeric(x)) {
+      log10(x - min(x, na.rm = TRUE) + 1)
+    } else {
+      x
+    }
+  }
+  
+  # Handle file uploads
+  observeEvent(input$files, {
+    req(input$files)
+    
+    # Store file paths
+    rdata_files(input$files)
+    
+    # Update file selector with uploaded files
+    updateSelectInput(session, "selected_file",
+                      choices = input$files$name,
+                      selected = input$files$name[1])
+  })
+  
+  # Handle file selection
+  observeEvent(input$selected_file, {
+    req(input$selected_file, rdata_files())
+    
+    # Find the selected file data
+    selected_file_data <- rdata_files()[rdata_files()$name == input$selected_file, ]
     
     # Create new environment to load data
     env <- new.env()
     
     tryCatch({
-      load(input$file$datapath, envir = env)
+      load(selected_file_data$datapath, envir = env)
       
       # Find all data.table objects in the environment
       dt_objects <- names(eapply(env, function(x) is.data.table(x)))
@@ -126,10 +153,17 @@ server <- function(input, output, session) {
     req(selected_dt(), input$color_var)
     color_values <- selected_dt()[[input$color_var]]
     if(is.numeric(color_values)) {
-      sliderInput("threshold", "Color Variable Threshold:",
-                  min = min(color_values, na.rm = TRUE),
-                  max = max(color_values, na.rm = TRUE),
-                  value = median(color_values, na.rm = TRUE))
+      transformed_values <- transform_var(color_values)
+      min_val <- round(min(transformed_values, na.rm = TRUE), 2)
+      max_val <- round(max(transformed_values, na.rm = TRUE), 2)
+      median_val <- round(median(transformed_values, na.rm = TRUE), 2)
+      
+      sliderInput("threshold", "Color Variable Threshold (log10 transformed):",
+                  min = min_val,
+                  max = max_val,
+                  value = median_val,
+                  step = 0.01,
+                  round = -2)
     }
   })
   
@@ -148,21 +182,18 @@ server <- function(input, output, session) {
     # Create factor based on threshold if numeric
     if(is.numeric(dt[[input$color_var]])) {
       req(input$threshold)
-      color_factor <- factor(dt[[input$color_var]] > input$threshold,
-                           labels = c("Below threshold", "Above threshold"))
+      transformed_color <- transform_var(dt[[input$color_var]])
+      color_factor <- factor(transformed_color > input$threshold,
+                             labels = c("Below threshold", "Above threshold"))
     } else {
       color_factor <- factor(dt[[input$color_var]])
     }
     
-    # Create transformed X and Y variables
-    # x_transformed <- log(dt[[input$x_var]] - min(dt[[input$x_var]], na.rm = TRUE) + 1)
-    # y_transformed <- log(dt[[input$y_var]] - min(dt[[input$y_var]], na.rm = TRUE) + 1)
-
     x_transformed <- sqrt(dt[[input$x_var]] - min(c(dt[[input$x_var]],
-                                                   dt[[input$y_var]]),
+                                                    dt[[input$y_var]]),
                                                   na.rm = TRUE) + 1)
     y_transformed <- sqrt(dt[[input$y_var]] - min(c(dt[[input$x_var]],
-                                                   dt[[input$y_var]]),
+                                                    dt[[input$y_var]]),
                                                   na.rm = TRUE) + 1)
     
     # Create temporary data frame with transformed variables
@@ -173,10 +204,10 @@ server <- function(input, output, session) {
     )
     
     ggplot(plot_dt, aes(x = x, y = y)) +
-      geom_point(aes(color = color), alpha = 0.6) +  # Changed alpha to 0.6
+      geom_point(aes(color = color), alpha = 0.6) +
       theme_bw() +
-      labs(x = paste("log(", input$x_var, " - min(", input$x_var, ") + 1)"),
-           y = paste("log(", input$y_var, " - min(", input$y_var, ") + 1)"),
+      labs(x = paste("sqrt(", input$x_var, " - min + 1)"),
+           y = paste("sqrt(", input$y_var, " - min + 1)"),
            color = input$color_var) +
       scale_color_manual(values = c("blue", "red")) +
       theme(legend.position = "bottom")
@@ -189,24 +220,30 @@ server <- function(input, output, session) {
     dt <- selected_dt()
     color_var <- dt[[input$color_var]]
     
-    p <- ggplot(dt, aes_string(x = input$color_var)) +
-      theme_bw() +
-      labs(x = input$color_var, y = "Count")
-    
     if(is.numeric(color_var)) {
+      transformed_color <- transform_var(color_var)
+      plot_data <- data.frame(color_var = transformed_color)
+      
+      p <- ggplot(plot_data, aes(x = color_var)) +
+        theme_bw() +
+        labs(x = paste("log10(", input$color_var, " - min + 1)"), y = "Count")
+      
       req(input$threshold)
       p <- p + 
         geom_histogram(aes(fill = color_var > input$threshold), 
-                      bins = 30, alpha = 0.6) +  # Changed alpha to 0.6
+                       bins = 30, alpha = 0.6) +
         geom_vline(xintercept = input$threshold, 
-                  color = "red", linetype = "dashed", size = 1) +
+                   color = "red", linetype = "dashed", size = 1) +
         scale_fill_manual(values = c("blue", "red"),
-                         labels = c("Below threshold", "Above threshold"),
-                         name = "Groups") +
-        theme(legend.position = "bottom")
+                          labels = c("Below threshold", "Above threshold"),
+                          name = "Groups") +
+        theme(legend.position = "bottom") +
+        scale_x_continuous(labels = function(x) round(x, 2))
     } else {
-      p <- p + 
-        geom_bar(fill = "skyblue", alpha = 0.6) +  # Changed alpha to 0.6
+      p <- ggplot(dt, aes_string(x = input$color_var)) + 
+        geom_bar(fill = "skyblue", alpha = 0.6) +
+        theme_bw() +
+        labs(x = input$color_var, y = "Count") +
         theme(axis.text.x = element_text(angle = 45, hjust = 1))
     }
     
