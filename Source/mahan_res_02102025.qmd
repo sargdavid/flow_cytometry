@@ -1,0 +1,79 @@
+---
+title: "mahan data"
+format: html
+editor: visual
+---
+
+```{r}
+require(data.table)
+require(ggplot2)
+```
+
+# Data
+
+```{r}
+load("../Data/Mahan_02102025/dn.RData")
+dn <- data.table(dn$`Data Nuggets`)
+head(dn)
+
+load("../Data/Mahan_02102025/dt_dn_t_delta.RData")
+dt2 <- copy(dt_dn_t_delta)
+dt2 <- data.table(dt2)
+rm(dt_dn_t_delta)
+head(dt2)
+
+load("../Data/Mahan_02102025/nuggproj_color.RData")
+# 1st projection only
+dt3 <- data.table(nuggproj_color[[1]])
+rm(nuggproj_color)
+head(dt3)
+
+gc()
+```
+
+```{r}
+colnames(dn)
+dn[, 23:100] <- lapply(X = dn[, 23:100],
+                       FUN = factor)
+
+dn$proj1x <- dt3$axis1
+dn$proj1y <- dt3$axis2
+
+summary(dn)
+gc()
+```
+
+```{r, fig.width=10,fig.height=8}
+p1 <- ggplot(droplevels(dn[SVM.proj1 == "Grey", ]),
+             aes(x = proj1x,
+                 y = proj1y)) +
+  geom_point(color = "grey",
+             size = 1) +
+  geom_point(data = droplevels(dn[SVM.proj1 != "Grey", ]),
+             aes(x = proj1x,
+                 y = proj1y,
+                 fill = SVM.proj1),
+             shape = 21,
+             size = 2,
+             inherit.aes = FALSE) +
+  theme_bw()
+p1
+```
+
+```{r, fig.width=10,fig.height=8}
+p1 <- ggplot(dn,
+             aes(x = proj1x,
+                 y = proj1y,
+                 color = SVM.proj1)) +
+  facet_wrap(~ clus13) +
+  geom_point(size = 1) +
+  theme_bw()
+p1
+```
+
+
+```{r}
+p1 <- p1 +
+  geom_point(aes(x = ))
+```
+
